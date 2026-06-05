@@ -19,11 +19,11 @@
 #include <SDL2/SDL_mixer.h> 
 
 #include <imgui.h>
+#include <misc/cpp/imgui_raii.h>
+#include <misc/cpp/imgui_stdlib.h>
 #include <backends/imgui_impl_sdl2.h>
 #include <backends/imgui_impl_sdlrenderer2.h>
 #include <misc/freetype/imgui_freetype.h>
-
-#include "imgui_extras.hpp"
 
 int main(int argc, char **argv)
 {
@@ -140,7 +140,7 @@ int main(int argc, char **argv)
         
         ImGui::SetNextWindowSize({1280, 720}, ImGuiCond_Always);
 
-        if (ImGui::WindowGuard main_window{"Themiify",
+        if (ImGui::RAII::Window main_window{"Themiify",
                                            nullptr,
                                            ImGuiWindowFlags_NoTitleBar |
                                            ImGuiWindowFlags_NoMove |
