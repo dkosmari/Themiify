@@ -30,11 +30,13 @@
 
 #include <imgui.h>
 #include <imgui_internal.h>
-#include <misc/cpp/imgui_raii.h>
-#include <misc/cpp/imgui_stdlib.h>
-#include <backends/imgui_impl_sdl2.h>
-#include <backends/imgui_impl_sdlrenderer2.h>
-#include <misc/freetype/imgui_freetype.h>
+#include <imgui_raii.h>
+#include <imgui_stdlib.h>
+#include <imgui_impl_sdl2.h>
+#include <imgui_impl_sdlrenderer2.h>
+#ifdef IMGUI_ENABLE_FREETYPE
+#include <imgui_freetype.h>
+#endif
 
 #include <curl/curl.h>
 
@@ -58,9 +60,11 @@ namespace App {
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
 
+#ifdef IMGUI_ENABLE_FREETYPE
         io.Fonts->FontLoaderFlags |= ImGuiFreeTypeLoaderFlags_LoadColor;
         io.Fonts->FontLoaderFlags |= ImGuiFreeTypeLoaderFlags_Bitmap;
-
+#endif
+        
         io.ConfigDragScroll = true;
         io.ConfigWindowsMoveFromTitleBarOnly = true;
         io.MouseDragThreshold = 25;
@@ -85,8 +89,11 @@ namespace App {
         ImFontConfig fontConfig;
         fontConfig.Flags |= ImFontFlags_NoLoadError;
         fontConfig.EllipsisChar = U'…';
-        fontConfig.GlyphOffset.y = -30 * (4.0f / 32.0f);
-
+#ifdef IMGUI_ENABLE_FREETYPE
+        // WORKAROUND: the freetype backend seems to misalign fonts merged with FontAwesome
+        fontConfig.GlyphOffset.y = -style.FontSizeBase * (1.0f / 8.0f);
+#endif
+        
         // Get Wii U System fonts.
         // Down the line move this to its own font loading function because we'll
         // be loading more fonts than just this one.
@@ -94,9 +101,9 @@ namespace App {
         uint32_t fontSize = 0;
         OSGetSharedData(OS_SHAREDDATATYPE_FONT_STANDARD, 0, &fontData, &fontSize);
 
-        io.Fonts->AddFontFromMemoryTTF(fontData, fontSize, 30, &fontConfig);
+        io.Fonts->AddFontFromMemoryTTF(fontData, fontSize, style.FontSizeBase, &fontConfig);
         fontConfig.MergeMode = true;
-        io.Fonts->AddFontFromFileTTF("fs:/vol/content/fonts/fontawesome-webfont.ttf", 30, &fontConfig);
+        io.Fonts->AddFontFromFileTTF("fs:/vol/content/fonts/fontawesome-webfont.ttf", style.FontSizeBase, &fontConfig);
 
         ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
         ImGui_ImplSDLRenderer2_Init(renderer);

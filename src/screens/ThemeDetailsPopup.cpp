@@ -10,8 +10,8 @@
 #include <iostream>
 
 #include <imgui.h>
-#include <misc/cpp/imgui_stdlib.h>
-#include <misc/cpp/imgui_raii.h>
+#include <imgui_stdlib.h>
+#include <imgui_raii.h>
 
 #include <whb/log.h>
 

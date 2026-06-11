@@ -12,7 +12,7 @@
 #include <whb/log.h>
 
 #include <imgui.h>
-#include <misc/cpp/imgui_raii.h>
+#include <imgui_raii.h>
 
 namespace HomeScreen {
     void initialize(SDL_Renderer *renderer) {
