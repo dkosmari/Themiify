@@ -198,9 +198,6 @@ namespace Camera {
         gSurface.tileMode = 0;
         gSurface.pixelFormat = 0;
 
-        // Same as the standalone version:
-        // submit once here, before CAMOpen().
-        // Do not fail initialize if this returns NOT_READY.
         CAMSubmitTargetSurface(gCamera, &gSurface);
 
         gInitialized.store(true);

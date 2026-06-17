@@ -332,6 +332,11 @@ namespace ThemezerScreen {
                 if (exact_id_mode) {
                     if (fetching_theme_by_id) {
                         ImGui::Text("Searching by exact Themezer ID...");
+                        if (ImGui::Button("Cancel Search")) {
+                            exact_id_mode = false;
+                            query = "";
+                            fetch_page(1);
+                        }
                     }
                     else if (exact_theme) {
                         show(*exact_theme);
