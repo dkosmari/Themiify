@@ -62,6 +62,9 @@ target_link_libraries(themiify PRIVATE
     glaze
     imgui
     mocha
+    wiiu-stdout
+    quirc
+    hips
     PkgConfig::zlib
     PkgConfig::freetype2 
     PkgConfig::harfbuzz
@@ -71,8 +74,6 @@ target_link_libraries(themiify PRIVATE
     PkgConfig::sdl2
     PkgConfig::SDL2_image
     PkgConfig::SDL2_mixer
-    wiiu-stdout
-    quirc
 )
 
 # run program using wiiload

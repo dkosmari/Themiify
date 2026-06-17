@@ -81,6 +81,11 @@ target_include_directories(quirc PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/quirc/lib
 )
 
+# hips
+add_library(hips INTERFACE)
+
+target_include_directories(hips INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/hips/include)
+
 # cafe_glyphs
 add_library(cafe_glyphs INTERFACE)
 

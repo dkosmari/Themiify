@@ -19,7 +19,7 @@
 
 #include <zip.h>
 #include <glaze/glaze.hpp>
-#include "hips.hpp"
+#include <hips.hpp>
 #include <mocha/mocha.h>
 
 #include <sysapp/title.h>
