@@ -299,7 +299,8 @@ namespace HomeScreen {
 
         ImGui::Text(ICON_FA_STAR " Special thanks:");
         ImGui::Indent();
-        ImGui::Text("• The Theme Café Discord mods, devs and founders!" \
+        ImGui::Text("• Juanen100 for the StyleMiiU Aroma Plugin!" \
+                    "\n• The Theme Café Discord mods, devs and founders!" \
                     "\n• Gatto for the incredible Theme Café docs!" \
                     "\n• Migush and the whole Themezer team!" \
                     "\n• All the amazing Wii U theme creators!" \

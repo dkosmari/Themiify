@@ -36,7 +36,7 @@ wut_create_wuhb(themiify
     CONTENT content
     NAME Themiify
     SHORTNAME Themiify
-    AUTHOR Fangal_Airbag, Alpha-Craft, dkosmari & more!
+    AUTHOR Fangal-Airbag, AlphaCraft9658, dkosmari & more!
     ICON meta/icon.png
     TVSPLASH meta/tv-splash.png
     DRCSPLASH meta/drc-splash.png
