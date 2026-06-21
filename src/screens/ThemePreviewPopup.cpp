@@ -1,6 +1,6 @@
 /*
  * Themiify - A theme manager for the Nintendo Wii U
- * Copyright (C) 2026 Fangal-Airbag  
+ * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
  * Copyright (C) 2026  Daniel K. O. <dkosmari>
  *
@@ -93,7 +93,7 @@ namespace ThemePreviewPopup {
             popup_queued = false;
         }
 
-        auto& style = ImGui::GetStyle();
+        const auto &style = ImGui::GetStyle();
         auto center = ImGui::GetMainViewport()->GetCenter();
         auto viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowSize(viewport->Size, ImGuiCond_Always);
