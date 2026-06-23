@@ -77,7 +77,7 @@ namespace ThemePreviewPopup {
             popup_queued = false;
         }
 
-        auto& style = ImGui::GetStyle();
+        const auto &style = ImGui::GetStyle();
         auto center = ImGui::GetMainViewport()->GetCenter();
         auto viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowSize(viewport->Size, ImGuiCond_Always);
