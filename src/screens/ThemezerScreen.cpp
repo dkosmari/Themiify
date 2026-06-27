@@ -47,6 +47,7 @@ using std::endl;
 using namespace std::literals;
 
 namespace ThemezerScreen {
+    bool first_fetch = true;
     uint32_t page = 0;
 
     ItemSort sort = ItemSort::CREATED;
@@ -148,7 +149,7 @@ namespace ThemezerScreen {
         themezer_logo = IMG_LoadTexture(renderer, "fs:/vol/content/ui/themezer-logo.png");
         qr_sfx = Mix_LoadWAV("fs:/vol/content/sound/qr-scan.wav");
 
-        fetch_page(1);
+        first_fetch = true;
     }
 
     void finalize() {
@@ -186,7 +187,7 @@ namespace ThemezerScreen {
             ImGui::Text("Downloads: %u", theme.downloadCount);
 
             if (ImGui::Button(ICON_FA_INFO_CIRCLE " Details")) {
-                ThemeDetailsPopup::show_themezer(theme.hexId, theme);
+                ThemeDetailsPopup::open_themezer(theme.hexId, theme);
             }
 
             ImGui::SameLine();
@@ -391,5 +392,10 @@ namespace ThemezerScreen {
         DownloadThemePopup::process_ui();
         InstallThemePopup::process_ui();
         QRCodePopup::process_ui();
+
+        if (first_fetch) {
+            fetch_page(1);
+            first_fetch = false;
+        }
     }
 }
