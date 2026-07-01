@@ -18,6 +18,7 @@
 
 #include <iostream>
 #include <filesystem>
+#include <optional>
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
@@ -35,16 +36,13 @@ using std::endl;
 // #define DEBUG_BG_COLOR
 
 namespace HomeScreen {
+    using Installer::InstalledThemeMetadata;
+
     SDL_Renderer *home_renderer = nullptr;
 
     SDL_Texture *themiify_logo = nullptr;
 
-    std::string current_theme_str;
-    std::string current_theme_id_path;
-    std::string current_theme_json_path;
-    std::filesystem::path current_theme_thumbnail_path;
-
-    Installer::installed_theme_data current_theme_data;
+    std::optional<InstalledThemeMetadata> current_theme_data;
 
     bool current_theme_refresh = true;
 
@@ -65,23 +63,7 @@ namespace HomeScreen {
     }
 
     void refresh_current_theme() {
-        current_theme_str = Installer::GetCurrentTheme();
-        current_theme_id_path = get_theme_id(current_theme_str);
-
-        current_theme_json_path =
-            THEMIIFY_INSTALLED_THEMES / (current_theme_id_path + ".json");
-
-        current_theme_thumbnail_path =
-            THEMIIFY_THUMBNAILS / (current_theme_id_path + ".webp");
-
-        int res = Installer::GetInstalledThemeMetadata(
-            current_theme_json_path,
-            &current_theme_data
-        );
-
-        if (res != 1)
-            current_theme_data.themeIDPath = "";
-
+        current_theme_data = Installer::GetCurrentTheme();
         current_theme_refresh = false;
     }
 
@@ -195,7 +177,7 @@ namespace HomeScreen {
 
         ImGui::Spacing();
 
-        if (current_theme_data.themeIDPath.empty()) {
+        if (!current_theme_data) {
             ImGui::Text("No current theme found.");
             ImGui::Spacing();
         }
@@ -204,25 +186,28 @@ namespace HomeScreen {
 
             {
                 Child theme_frame{
-                    current_theme_data.themeIDPath,
+                    "CurrentTheme",
                     {800, 300},
                     ImGuiChildFlags_NavFlattened |
                     ImGuiChildFlags_FrameStyle,
                     ImGuiWindowFlags_NoSavedSettings
                 };
 
-                auto img = ImageLoader::get(current_theme_thumbnail_path);
-                ImGui::Image((ImTextureID)img, {426, 240});
-
-                ImGui::SameLine();
+                if (!current_theme_data->previewPath.empty()) {
+                    auto img = ImageLoader::get(current_theme_data->previewPath);
+                    ImGui::Image((ImTextureID)img, {426, 240});
+                    ImGui::SameLine();
+                }
 
                 {
                     Group right_group;
 
                     {
                         Font font_guard{nullptr, 30};
-                        ImGui::TextWrapped(current_theme_data.themeName);
-                        ImGui::TextWrapped("by: %s", current_theme_data.themeAuthor.c_str());
+                        ImGui::TextWrapped(current_theme_data->uthemeMetadata.themeName);
+                        if (current_theme_data->uthemeMetadata.themeAuthor)
+                            ImGui::TextWrapped("by: " +
+                                               *current_theme_data->uthemeMetadata.themeAuthor);
                     }
                 }
             }

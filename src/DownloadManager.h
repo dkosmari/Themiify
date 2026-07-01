@@ -1,6 +1,6 @@
 /*
  * Themiify - A theme manager for the Nintendo Wii U
- * Copyright (C) 2026 Fangal-Airbag  
+ * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
  * Copyright (C) 2026  Daniel K. O. <dkosmari>
  *
@@ -28,16 +28,11 @@ namespace DownloadManager {
     };
 
     struct Info {
-
-        std::string label;
-        std::string utheme_url;
-        std::string thumbnail_url;
-        std::filesystem::path utheme_output;
-        std::filesystem::path thumbnail_output;
+        std::string url;
+        std::filesystem::path filename;
         float progress = 0;
         std::uint64_t speed = 0;
         State state;
-
     }; // struct Info
 
 
@@ -72,13 +67,10 @@ namespace DownloadManager {
 
 
     bool
-    add(const std::string& label,
-        const std::string& utheme_url,
-        const std::string& thumbnail_url,
-        const std::filesystem::path& utheme_output,
-        const std::filesystem::path& thumbnail_output,
-        success_function_t success_func,
-        failure_function_t failure_func);
+    add(const std::string& url,
+        const std::filesystem::path& filename,
+        success_function_t success_func = {},
+        failure_function_t failure_func = {});
 
     void
     pause(const std::string& url);
@@ -86,8 +78,6 @@ namespace DownloadManager {
     void
     cancel(const std::string& url);
 
-
-    const std::vector<std::shared_ptr<const Info>>&
-    get_infos();
-
+    std::shared_ptr<const Info>
+    get_info(const std::string& url);
 }

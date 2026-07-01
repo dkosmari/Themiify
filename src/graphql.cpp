@@ -1,6 +1,6 @@
 /*
  * Themiify - A theme manager for the Nintendo Wii U
- * Copyright (C) 2026 Fangal-Airbag  
+ * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
  * Copyright (C) 2026  Daniel K. O. <dkosmari>
  *
@@ -59,7 +59,7 @@ namespace graphql {
             curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);
             curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1L);
             curl_easy_setopt(handle, CURLOPT_AUTOREFERER, 1L);
-            curl_easy_setopt(handle, CURLOPT_SSL_VERIFYPEER, 0L);
+            curl_easy_setopt(handle, CURLOPT_SSL_VERIFYPEER, 1L);
             curl_easy_setopt(handle, CURLOPT_ACCEPT_ENCODING, "");
             curl_easy_setopt(handle, CURLOPT_TRANSFER_ENCODING, 1L);
             curl_easy_setopt(handle, CURLOPT_BUFFERSIZE, 65536L);

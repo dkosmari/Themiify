@@ -52,8 +52,9 @@ void DeletePath(const std::filesystem::path& inputPath) {
     }
 }
 
-static std::u32string format_codepoint(char32_t c)
-{
+static
+std::u32string
+format_codepoint(char32_t c) {
     char buffer[32];
     std::snprintf(buffer, sizeof buffer, "U+%04X", c);
     std::u32string result;
@@ -62,8 +63,8 @@ static std::u32string format_codepoint(char32_t c)
     return result;
 }
 
-std::filesystem::path sanitize_element(const std::filesystem::path& input)
-{
+std::filesystem::path
+sanitize_element(const std::filesystem::path& input) {
     std::u32string output_str;
     std::u32string input_str = input.u32string();
     for (auto c : input_str) {
@@ -102,7 +103,8 @@ std::filesystem::path sanitize_element(const std::filesystem::path& input)
     return output_str;
 }
 
-std::filesystem::path sanitize(const std::filesystem::path& input) {
+std::filesystem::path
+sanitize(const std::filesystem::path& input) {
     std::filesystem::path output;
     auto is_newlib_root = [](const std::filesystem::path& name) -> bool
     {
@@ -116,4 +118,37 @@ std::filesystem::path sanitize(const std::filesystem::path& input) {
             output /= sanitize_element(element);
     }
     return output;
+}
+
+std::filesystem::path
+make_cached_thumbnail_filename(const std::string& hexId) {
+    return THEMIIFY_THUMBNAILS / ("Themezer" + hexId + ".webp");
+}
+
+std::filesystem::path
+make_utheme_filename(const std::string& slug) {
+    return THEMES_ROOT / (slug + ".utheme");
+}
+
+std::string
+make_theme_id_filename(const std::string& themeID)
+{
+    std::string result = themeID;
+    // Simply delete the ':' from the ID.
+    std::erase(result, ':');
+    return result;
+}
+
+// TODO: this belongs to installer.cpp
+std::filesystem::path
+make_theme_folder_name(const std::string& name,
+                       const std::optional<std::string>& themeID)
+{
+    std::string result = name;
+    if (themeID) {
+        std::string clean_theme_id = *themeID;
+        std::erase(clean_theme_id, ':');
+        result += " (" + clean_theme_id + ")";
+    }
+    return sanitize_element(result);
 }

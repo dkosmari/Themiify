@@ -293,9 +293,10 @@ namespace ImageLoader {
 
                 entry.headers = curl_slist_append(entry.headers, "Accept: image/*");
 
+                curl_easy_setopt(entry.easy, CURLOPT_VERBOSE, 1L);
                 curl_easy_setopt(entry.easy, CURLOPT_URL, location.c_str());
                 curl_easy_setopt(entry.easy, CURLOPT_HTTPHEADER, entry.headers);
-                curl_easy_setopt(entry.easy, CURLOPT_SSL_VERIFYPEER, 0L);
+                curl_easy_setopt(entry.easy, CURLOPT_SSL_VERIFYPEER, 1L);
                 curl_easy_setopt(entry.easy, CURLOPT_FOLLOWLOCATION, 1L);
                 curl_easy_setopt(entry.easy, CURLOPT_AUTOREFERER, 1L);
                 curl_easy_setopt(entry.easy, CURLOPT_ACCEPT_ENCODING, "");
@@ -331,10 +332,10 @@ namespace ImageLoader {
             }
         }
         catch (std::exception& e) {
-            std::print(cerr,
-                       "ERROR: ImageLoader::process_one_request(): location=\"{}\", exception={}",
-                       location,
-                       e.what());
+            std::println(cerr,
+                         "ERROR: ImageLoader::process_one_request(): location=\"{}\", exception={}",
+                         location,
+                         e.what());
 
             entry.state = LoadState::error;
         }

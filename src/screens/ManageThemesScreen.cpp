@@ -20,6 +20,7 @@
 #include <imgui_raii.h>
 
 #include "ManageThemesScreen.h"
+#include "HomeScreen.h"
 #include "InstallThemePopup.h"
 #include "ThemeDetailsPopup.h"
 #include "DeleteThemePopup.h"
@@ -37,6 +38,10 @@ using std::endl;
 using namespace std::literals;
 
 namespace ManageThemesScreen {
+
+    using Installer::InstalledThemeMetadata;
+
+
     enum class Tab {
         manage_installed,
         install_local,
@@ -45,19 +50,17 @@ namespace ManageThemesScreen {
     Tab current_tab = Tab::manage_installed;
 
     std::vector<std::filesystem::path> local_themes;
-    std::vector<std::filesystem::path> json_files;
 
-    std::vector<Installer::installed_theme_data> installed_themes;
+    std::vector<InstalledThemeMetadata> installed_themes;
 
     bool local_themes_refresh = true;
-    bool is_current_theme = false;
 
     SDL_Renderer *manage_renderer;
 
     std::filesystem::path thumbnail_path;
 
     std::string search;
-    std::string current_theme;
+    std::string current_theme_name;
 
     std::string as_lower_case(std::string s) {
         for (char &c : s)
@@ -65,9 +68,9 @@ namespace ManageThemesScreen {
         return s;
     }
 
-    int similarity_score(const std::string& haystack_, const std::string& needle_) {
-        std::string haystack = as_lower_case(haystack_);
-        std::string needle = as_lower_case(needle_);
+    int similarity_score(std::string haystack, std::string needle) {
+        haystack = as_lower_case(haystack);
+        needle = as_lower_case(needle);
 
         if (needle.empty())
             return 0;
@@ -107,22 +110,16 @@ namespace ManageThemesScreen {
     }
 
     void scan_installed_themes() {
-        json_files.clear();
         installed_themes.clear();
 
-        for (auto& entry : std::filesystem::directory_iterator(THEMIIFY_INSTALLED_THEMES)) {
-            if (!entry.is_regular_file() || entry.path().extension() != ".json")
+        for (auto& entry : std::filesystem::directory_iterator(THEMES_ROOT)) {
+            if (!entry.is_directory())
                 continue;
-
-            Installer::installed_theme_data data;
-            Installer::GetInstalledThemeMetadata(entry.path(), &data);
-
-            if (!exists(data.installedThemePath)) {
-                DeletePath(entry.path());
+            cout << "scan_installed_themes: " << entry.path() << endl;
+            InstalledThemeMetadata data;
+            if (!Installer::GetInstalledThemeMetadata(entry.path(), data))
                 continue;
-            }
-
-            json_files.push_back(entry.path());
+            // cout << "Found metadata for: " << data.themePath << endl;
             installed_themes.push_back(data);
         }
     }
@@ -143,20 +140,24 @@ namespace ManageThemesScreen {
         local_themes_refresh = true;
     }
 
-    void show_installed_theme(const Installer::installed_theme_data& theme_data,
-                              bool is_current,
+    void show_installed_theme(const Installer::InstalledThemeMetadata& theme_data,
+                              bool is_active,
                               const ImVec2& inner_size,
                               const ImVec2& padding) {
         // NOTE: to create a complex button, we create a button with no text, then overlap
         // the contents.
         using namespace ImGui::RAII;
+
+        ID id{theme_data.themePath.string()};
+
         const auto& style = ImGui::GetStyle();
         const ImVec2 outer_size = inner_size + 2 * padding;
         ImVec2 start_pos = ImGui::GetCursorPos() + padding;
-        auto thumbnailPath = THEMIIFY_THUMBNAILS / (theme_data.themeIDPath + ".webp");
 
-        if (ImGui::Button("##btn" + theme_data.themeID, outer_size)) {
-            ThemeDetailsPopup::open_local(theme_data, thumbnailPath, is_current);
+        bool clicked = false;
+        if (ImGui::Button("##details", outer_size)) {
+            // NOTE: delay opening the popup, gotta check if the user clicked on the star.
+            clicked = true;
         }
 
         // NOTE: when hovered or activated, change the text color to the window bg color.
@@ -169,33 +170,53 @@ namespace ManageThemesScreen {
         ImGui::SetCursorPos(start_pos);
         Group grp;
 
-        {
+        if (!theme_data.previewPath.empty()) {
             StyleVar no_border{ImGuiStyleVar_ImageBorderSize, 0};
-            auto img = ImageLoader::get(thumbnailPath);
+            auto img = ImageLoader::get(theme_data.previewPath);
             ImVec2 img_size = {inner_size.x, inner_size.x * 9.0f / 16.0f};
             ImGui::Image((ImTextureID)img, img_size);
         }
 
         {
             Font font{nullptr, 24};
-            ImGui::TextAligned(0.0f, inner_size.x, theme_data.themeName);
+            ImGui::TextAligned(0.0f, inner_size.x, theme_data.uthemeMetadata.themeName);
         }
 
         {
-            // Show author aligned to the left, current marker to the right.
-            Font font{nullptr, 18};
+            // Show author aligned to the left, active marker to the right.
+            const std::string star_label = is_active ? ICON_FA_STAR : ICON_FA_STAR_O;
+            const float star_font_size = 30;
+            ImVec2 star_size;
+            {
+                Font star_font{nullptr, star_font_size};
+                star_size = ImGui::CalcTextSize(star_label);
+            }
 
-            std::string current_label = is_current ? ICON_FA_STAR : ICON_FA_STAR_O;
-            float current_width = ImGui::CalcTextSize(current_label).x;
+            if (theme_data.uthemeMetadata.themeAuthor) {
+                float author_width = inner_size.x - star_size.x - style.ItemSpacing.x;
+                Font font{nullptr, 18};
+                ImGui::TextAligned(0.0f, author_width,
+                                   "by " + *theme_data.uthemeMetadata.themeAuthor);
+            }
 
-            float author_width = inner_size.x - current_width - style.ItemSpacing.x;
-
-            ImGui::TextAligned(0.0f, author_width,
-                               "by %s", theme_data.themeAuthor.data());
-            ImGui::SameLine();
-            ImGui::SetCursorPosX(start_pos.x + inner_size.x - current_width);
-            ImGui::Text(current_label);
+            // Put active marker on the bottom right.
+            // TODO: detect clicks here, toggle active state instead of showing details popup.
+            ImGui::SetCursorPos(start_pos + inner_size - star_size);
+            {
+                Font star_font{nullptr, star_font_size};
+                StyleColor star_color{ImGuiCol_Text, {1.0f, 0.9f, 0.0f, 1.0f}};
+                ImGui::Text(star_label);
+                if (clicked && ImGui::IsItemHovered()) {
+                    clicked = false;
+                    Installer::SetCurrentTheme(theme_data.themePath);
+                    force_refresh();
+                    HomeScreen::force_refresh();
+                }
+            }
         }
+
+        if (clicked)
+            ThemeDetailsPopup::open_local(theme_data, is_active);
     }
 
     void show_utheme(const std::filesystem::path& utheme_path) {
@@ -237,9 +258,9 @@ namespace ManageThemesScreen {
         ImGui::SetCursorPosX(text_wrap_pos + style.ItemSpacing.x);
 
         if (ImGui::Button(install_label, install_size)) {
-            Installer::theme_data theme_data;
-            Installer::GetThemeMetadata(utheme_path, &theme_data);
-            InstallThemePopup::show(utheme_path, theme_data, false, true);
+            Installer::UThemeMetadata theme_data;
+            Installer::GetUThemeMetadata(utheme_path, theme_data);
+            InstallThemePopup::open(utheme_path, theme_data, false, true);
         }
 
         ImGui::SameLine();
@@ -322,14 +343,15 @@ namespace ManageThemesScreen {
 
                     if (local_themes_refresh) {
                         scan_installed_themes();
-                        current_theme = Installer::GetCurrentTheme();
+                        current_theme_name = Installer::GetCurrentThemeName();
                         local_themes_refresh = false;
                     }
 
                     std::vector<std::size_t> visible_indexes;
 
                     for (std::size_t i = 0; i < installed_themes.size(); ++i) {
-                        int score = similarity_score(installed_themes[i].themeName, search);
+                        int score = similarity_score(installed_themes[i].uthemeMetadata.themeName,
+                                                     search);
 
                         if (search.empty() || score >= 0)
                             visible_indexes.push_back(i);
@@ -339,8 +361,11 @@ namespace ManageThemesScreen {
                         std::ranges::sort(
                             visible_indexes,
                             [&](std::size_t a, std::size_t b) {
-                                return similarity_score(installed_themes[a].themeName, search)
-                                    > similarity_score(installed_themes[b].themeName, search);
+                                const auto& ta = installed_themes[a];
+                                const auto& tb = installed_themes[b];
+                                auto sa = similarity_score(ta.uthemeMetadata.themeName, search);
+                                auto sb = similarity_score(tb.uthemeMetadata.themeName, search);
+                                return sa > sb;
                             }
                         );
                     }
@@ -357,10 +382,11 @@ namespace ManageThemesScreen {
 
                         for (auto [counter, index] : visible_indexes | std::views::enumerate) {
                             auto& theme_data = installed_themes[index];
-                            // auto& current_json_path = json_files[index];
 
-                            bool is_current_theme =
-                                sanitize_element(theme_data.themeName + " (" + theme_data.themeIDPath + ")") == current_theme;
+                            auto theme_folder_name =
+                                make_theme_folder_name(theme_data.uthemeMetadata.themeName,
+                                                       theme_data.uthemeMetadata.themeID);
+                            bool is_current_theme = current_theme_name == theme_folder_name;
 
                             ImVec2 grid_pos = { float(counter % 3), float(counter / 3) };
                             ImVec2 pos = grid_pos * (outer_size + spacing);

@@ -47,7 +47,7 @@ namespace InstallThemePopup {
         const std::string popup_id = "Install Theme"s;
 
         std::filesystem::path utheme_path;
-        Installer::theme_data theme_data;
+        Installer::UThemeMetadata theme_data;
         bool set_current = true;
 
         std::jthread install_thread;
@@ -122,8 +122,8 @@ namespace InstallThemePopup {
 
     } // namespace
 
-    void show(const std::filesystem::path &uthemePath,
-              Installer::theme_data themeData,
+    void open(const std::filesystem::path &uthemePath,
+              const Installer::UThemeMetadata &themeData,
               bool confirmationCompleted,
               bool setCurrent) {
         create_directories(THEMES_ROOT);
@@ -219,8 +219,9 @@ namespace InstallThemePopup {
                                             progress_handler,
                                             success_handler,
                                             error_handler);
-                    if (state == State::success && set_current)
-                        Installer::SetCurrentTheme(theme_data.themeName, theme_data.themeIDPath);
+                    if (state == State::success && set_current) {
+                        Installer::SetCurrentTheme(Installer::GetThemePath(theme_data));
+                    }
                 });
 
                 break;

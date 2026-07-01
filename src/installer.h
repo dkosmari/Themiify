@@ -11,29 +11,29 @@
 #include <exception>
 #include <filesystem>
 #include <functional>
-#include <string>
+#include <optional>
 #include <stop_token>
+#include <string>
 
 namespace Installer {
-    struct theme_data {
-        std::string themeID;
-        std::string themeIDPath;
+    struct UThemeMetadata {
+        std::optional<std::string> themeID;
         std::string themeName;
-        std::string themeAuthor;
-        std::string themeVersion;
+        std::optional<std::string> themeAuthor;
+        std::optional<std::string> themeVersion;
     };
 
-    struct installed_theme_data {
-        std::string themeID;
-        std::string themeIDPath;
-        std::string themeName;
-        std::string themeAuthor;
-        std::string themeVersion;
-        std::filesystem::path installedThemePath;
+    struct InstalledThemeMetadata {
+        UThemeMetadata uthemeMetadata;
+        std::filesystem::path themePath;
+        std::filesystem::path previewPath;
+        std::filesystem::path legacyMetadataPath;
     };
 
-    int GetThemeMetadata(const std::filesystem::path &themePath, theme_data *themeData);
-    int GetInstalledThemeMetadata(const std::filesystem::path &installedThemeJsonPath, installed_theme_data *themeData);
+    bool GetUThemeMetadata(const std::filesystem::path &themePath,
+                           UThemeMetadata &meta);
+    bool GetInstalledThemeMetadata(const std::filesystem::path &installedThemePath,
+                                   InstalledThemeMetadata &imeta);
 
     using progress_function_sig = void (const std::string &msg);
     using progress_function_t = std::function<progress_function_sig>;
@@ -46,11 +46,16 @@ namespace Installer {
 
     void InstallTheme(std::stop_token &stopper,
                       const std::filesystem::path &themePath,
-                      theme_data themeData,
+                      UThemeMetadata themeMetadata,
                       progress_function_t progressCallback,
                       success_function_t successCallback,
                       error_function_t errorCallback);
-    bool DeleteTheme(const std::filesystem::path &modpackPath, const std::filesystem::path &installPath);
-    bool SetCurrentTheme(const std::string &themeName, const std::string &themeIDPath);
-    std::string GetCurrentTheme();
+    bool DeleteTheme(const std::filesystem::path &themePath,
+                     const std::filesystem::path &metadataPath);
+    bool SetCurrentTheme(const std::filesystem::path &themePath);
+    std::string GetCurrentThemeName();
+    std::optional<InstalledThemeMetadata> GetCurrentTheme();
+
+    std::filesystem::path GetThemePath(const UThemeMetadata& meta);
+    // std::filesystem::path GetThumbnailPath(const InstalledThemeMetadata& imeta);
 } // namespace Installer

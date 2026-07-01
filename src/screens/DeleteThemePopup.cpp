@@ -31,14 +31,12 @@ namespace DeleteThemePopup {
     bool popup_queued;
     const std::string popup_id = "DeleteThemePopup"s;
 
-    Installer::installed_theme_data installedThemeData;
-    std::filesystem::path themeJsonPath;
+    Installer::InstalledThemeMetadata installedThemeData;
 
-    void show(Installer::installed_theme_data installed_theme_data, std::filesystem::path theme_json_path) {
+    void open(const Installer::InstalledThemeMetadata &installed_theme_data) {
         popup_queued = true;
         state = State::shown;
         installedThemeData = installed_theme_data;
-        themeJsonPath = theme_json_path;
     }
 
     void process_ui() {
@@ -74,7 +72,8 @@ namespace DeleteThemePopup {
             ImGui::Text("Delete Confirmation");
         }
 
-        ImGui::TextWrapped("Would you like to delete \"%s\"?", installedThemeData.themeName.c_str());
+        ImGui::TextWrapped("Would you like to delete \"%s\"?",
+                           installedThemeData.uthemeMetadata.themeName.c_str());
 
         // Show two buttons with same size.
         const ImVec2 available = ImGui::GetContentRegionAvail();
@@ -99,7 +98,8 @@ namespace DeleteThemePopup {
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
 
         if (ImGui::Button(delete_label, button_size)) {
-            Installer::DeleteTheme(installedThemeData.installedThemePath, themeJsonPath);
+            Installer::DeleteTheme(installedThemeData.themePath,
+                                   installedThemeData.legacyMetadataPath);
             ManageThemesScreen::force_refresh();
             ImGui::CloseCurrentPopup();
             state = State::hidden;

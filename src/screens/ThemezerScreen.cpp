@@ -223,7 +223,7 @@ namespace ThemezerScreen {
             StyleColor green_bg{ImGuiCol_ChildBg, {0.0, 0.5, 0.0, 1.0}};
 #endif
             auto &style = ImGui::GetStyle();
-            auto orig_padding = style.WindowPadding;
+            // auto orig_padding = style.WindowPadding;
             StyleVar small_padding{ImGuiStyleVar_WindowPadding, {0, style.WindowPadding.y}};
             if (Child themezer_content{"ThemezerContent",
                                        {0, 0},
