@@ -147,7 +147,7 @@ namespace HomeScreen {
         }
 
         if (queueStyleMiiUPrompt) {
-            SettingsPopup::show(SettingsPopup::OpenState::stylemiiu);
+            SettingsPopup::open(SettingsPopup::OpenState::stylemiiu);
             queueStyleMiiUPrompt = false;
         }
 
