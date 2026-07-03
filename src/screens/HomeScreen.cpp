@@ -162,13 +162,9 @@ namespace HomeScreen {
 #ifdef DEBUG_BG_COLOR
         StyleColor brown_bg{ImGuiCol_ChildBg, {0.3, 0.3, 0.0, 1.0}};
 #endif
-        Child scrollable_content{"scrollable_content", {0, 0},
-                                 ImGuiChildFlags_AlwaysUseWindowPadding};
+        Child scrollable_content{"scrollable_content"};
         if (!scrollable_content)
             return;
-
-
-        ImGui::Spacing();
 
         {
             Font font{nullptr, 35};
