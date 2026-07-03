@@ -137,7 +137,7 @@ theme_id_to_cached_thumbnail_path(const std::string& themeID)
 
 std::filesystem::path
 make_utheme_filename(const std::string& slug) {
-    return THEMES_ROOT / (slug + ".utheme");
+    return sanitize(THEMES_ROOT / (slug + ".utheme"));
 }
 
 std::string

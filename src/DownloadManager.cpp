@@ -266,12 +266,9 @@ namespace DownloadManager {
                 if (entry->url == url)
                     return false;
             }
-            // TODO: sanitization should happen on the caller!
-            auto sanitized_filename = sanitize(filename);
-
             auto info = std::make_shared<Info>(
                 url,
-                sanitized_filename,
+                filename,
                 0.0f,
                 0,
                 State::queued
@@ -291,7 +288,7 @@ namespace DownloadManager {
 
             cout << "Added download:"
                  << "\n    " << url
-                 << "\n    " << sanitized_filename
+                 << "\n    " << filename
                  << endl;
 
             return true;
