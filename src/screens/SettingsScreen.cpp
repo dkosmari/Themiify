@@ -88,7 +88,7 @@ namespace SettingsScreen {
         if (!isFirstBoot)
             return;
 
-        SettingsPopup::show(SettingsPopup::OpenState::force_integrity);
+        SettingsPopup::open(SettingsPopup::OpenState::force_integrity);
 
         settings.is_first_boot = false;
         save_settings();
@@ -100,7 +100,7 @@ namespace SettingsScreen {
         if (!bootIntegrityCheckPending)
             return;
 
-        SettingsPopup::show(SettingsPopup::OpenState::force_integrity);
+        SettingsPopup::open(SettingsPopup::OpenState::force_integrity);
 
         bootIntegrityCheckPending = false;
     }
@@ -155,7 +155,7 @@ namespace SettingsScreen {
         ImGui::Spacing();
 
         if (ImGui::Button("Check integrity of Wii U Menu files")) {
-            SettingsPopup::show(SettingsPopup::OpenState::integrity);
+            SettingsPopup::open(SettingsPopup::OpenState::integrity);
         }
 
         ImGui::SameLine();
@@ -168,13 +168,13 @@ namespace SettingsScreen {
         ImGui::Spacing();
 
         if (ImGui::Button("Dump Wii U Menu files")) {
-            SettingsPopup::show(SettingsPopup::OpenState::dump);
+            SettingsPopup::open(SettingsPopup::OpenState::dump);
         }
 
         ImGui::Spacing();
 
         if (ImGui::Button("Clear Themiify cache")) {
-            SettingsPopup::show(SettingsPopup::OpenState::cache);
+            SettingsPopup::open(SettingsPopup::OpenState::cache);
         }
 
 
