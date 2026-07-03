@@ -1,6 +1,6 @@
 /*
  * Themiify - A theme manager for the Nintendo Wii U
- * Copyright (C) 2026 Fangal-Airbag  
+ * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
  * Copyright (C) 2026  Daniel K. O. <dkosmari>
  *
@@ -129,7 +129,7 @@ namespace QRCodePopup {
             }
         }
     }
-    
+
     void show(Mix_Chunk *qr_sfx) {
         popup_queued = true;
         state = State::shown;
@@ -139,7 +139,7 @@ namespace QRCodePopup {
 
     void process_ui() {
         using namespace ImGui::RAII;
-        
+
         if (state == State::hidden) {
             return;
         }
@@ -163,7 +163,7 @@ namespace QRCodePopup {
             ImGuiWindowFlags_AlwaysAutoResize |
             ImGuiWindowFlags_NoMove
         };
-        
+
         if (!popup) {
             state = State::hidden;
             return;
@@ -173,7 +173,7 @@ namespace QRCodePopup {
             case State::shown: {
                 ImGui::Text("Scan Theme QR Code");
                 ImGui::Separator();
-                
+
                 ImGui::Text(
                     "Place a Themezer QR Code in front of the camera and wait for the\n"
                     "code to be scanned automatically."
@@ -203,15 +203,18 @@ namespace QRCodePopup {
 
                     if (x > 0.0f)
                         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + x);
-                        
+
                     ImGui::Image(
                         (ImTextureID)camera_texture,
                         {image_width, image_height}
                     );
                 }
 
-                ImGui::TextWrapped("Tip: If the QR code is too bright, lower the brightness of the device its displayed on until it is clear " \
-                                    "enough to be seen on the camera preview.");
+                {
+                    Font font{nullptr, 25};
+                    ImGui::TextWrapped("Tip: If the QR code is too bright, lower the brightness of the device it's displayed on until it is clear " \
+                                        "enough to be seen on the camera preview.");
+                }
 
                 break;
             }
