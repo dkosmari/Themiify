@@ -52,7 +52,7 @@ std::filesystem::path
 theme_id_to_cached_thumbnail_path(const std::string& themeID);
 
 std::filesystem::path
-make_utheme_filename(const std::string& slug);
+make_utheme_filename(const std::string& slug, const std::string& hexID);
 
 std::string
 make_theme_id_filename(const std::string& themeID);

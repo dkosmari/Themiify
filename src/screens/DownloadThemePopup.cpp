@@ -53,7 +53,7 @@ namespace DownloadThemePopup {
         state = State::queued;
         transfer_name = theme_data.name;
         utheme_url = theme_data.downloadUrl;
-        utheme_filename = make_utheme_filename(theme_data.slug);
+        utheme_filename = make_utheme_filename(theme_data.slug, theme_data.hexId);
         error_message.clear();
     }
 
