@@ -182,8 +182,16 @@ namespace ThemezerScreen {
 
         const auto& style = ImGui::GetStyle();
         const ImVec2 outer_size = inner_size + 2 * padding;
-        ImVec2 start_pos = ImGui::GetCursorPos() + padding;
 
+        // Put everything inside a child window so we can bail out when not visibile.
+        Child container{"container", outer_size,
+                        ImGuiChildFlags_NavFlattened};
+        if (!container)
+            return;
+
+        ImVec2 start_pos = padding;
+
+        ImGui::SetCursorPos({0, 0});
         if (ImGui::Button("##button", outer_size)) {
             ThemeDetailsPopup::open_themezer(theme);
         }
@@ -219,7 +227,7 @@ namespace ThemezerScreen {
             float author_width = inner_size.x - downloads_width - style.ItemSpacing.x;
             text_limited(author_width, "by " + theme.creator.username);
             ImGui::SameLine();
-            ImGui::SetCursorPosX(start_pos.x + inner_size.x - downloads_width);
+            ImGui::SetCursorPosX(inner_size.x - downloads_width);
             ImGui::Text(downloads_label);
         }
     }

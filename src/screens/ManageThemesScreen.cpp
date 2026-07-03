@@ -144,9 +144,17 @@ namespace ManageThemesScreen {
 
         const auto& style = ImGui::GetStyle();
         const ImVec2 outer_size = inner_size + 2 * padding;
-        ImVec2 start_pos = ImGui::GetCursorPos() + padding;
+
+        // Put everything inside a child window so we can bail out when not visibile.
+        Child container{"container", outer_size,
+                        ImGuiChildFlags_NavFlattened};
+        if (!container)
+            return;
+
+        const ImVec2 start_pos = padding;
 
         bool clicked = false;
+        ImGui::SetCursorPos({0, 0});
         if (ImGui::Button("##button", outer_size)) {
             // NOTE: delay opening the popup, gotta check if the user clicked on the star.
             clicked = true;
@@ -204,7 +212,7 @@ namespace ManageThemesScreen {
         {
             Font star_font{nullptr, star_font_size};
             StyleColor star_color{ImGuiCol_Text, {1.0f, 0.9f, 0.0f, 1.0f}};
-            ImGui::SetCursorPos(start_pos + inner_size - star_size);
+            ImGui::SetCursorPos(inner_size - star_size);
             ImGui::Text(star_label);
             if (clicked && ImGui::IsItemHovered()) {
                 clicked = false; // cancel the click
