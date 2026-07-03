@@ -40,7 +40,7 @@ using ThemezerAPI::WiiuThemeSmall;
 namespace ThemeDetailsPopup {
     enum class State {
         hidden,
-        waiting,
+        waiting_themezer,
         ready_themezer,
         ready_local,
         error,
@@ -50,27 +50,27 @@ namespace ThemeDetailsPopup {
     State state;
     std::string hexId;
     std::string error;
-    WiiuThemeFull theme;
+    WiiuThemeFull fullTheme;
     WiiuThemeSmall smallTheme;
     Installer::InstalledThemeMetadata installedThemeData;
     const std::string popup_id = "ThemeDetailsPopup"s;
     bool isCurrent;
 
-    void open_themezer(const std::string& request_id, const WiiuThemeSmall &small_theme) {
+    void open_themezer(const WiiuThemeSmall &small_theme) {
         popup_queued = true;
-        hexId = request_id;
+        hexId = small_theme.hexId;
         state = State::hidden;
         error.clear();
-        theme = {};
+        fullTheme = {};
         smallTheme = small_theme;
         ThemezerAPI::wiiu::theme(hexId,
                                  [](const WiiuThemeFull& t)
                                  {
                                     cout << "Got theme!" << endl;
-                                    theme = t;
+                                    fullTheme = t;
                                     state = State::ready_themezer;
                                  });
-        state = State::waiting;
+        state = State::waiting_themezer;
     }
 
     void open_local(const Installer::InstalledThemeMetadata& installed_theme_data,
@@ -118,15 +118,19 @@ namespace ThemeDetailsPopup {
                 if (ImGui::IsWindowAppearing())
                     ImGui::SetScrollY(0);
 
-                if (!installedThemeData.previewPath.empty()) {
+                if (!installedThemeData.previewPaths.empty()) {
                     ImVec2 preview_size {640, 360};
+                    // Center the image.
                     auto available = ImGui::GetContentRegionAvail();
                     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (available.x - preview_size.x)
                                          / 2);
-                    auto img = ImageLoader::get(installedThemeData.previewPath);
-                    // TODO: should be a button to open the preview popup.
-                    ImGui::Image((ImTextureID)img, preview_size);
+                    auto img = ImageLoader::get(installedThemeData.previewPaths.front());
+                    StyleVar no_padding{ImGuiStyleVar_FramePadding, {0, 0}};
+                    if (ImGui::ImageButton("preview", (ImTextureID)img, preview_size))
+                        ThemePreviewPopup::open(installedThemeData.themePath,
+                                                installedThemeData.previewPaths);
                 }
+                // TODO: show more info? SD card path? List theme files?
             }
         }
 
@@ -135,7 +139,7 @@ namespace ThemeDetailsPopup {
         if (Child right{"right", {right_width, 0}, ImGuiChildFlags_NavFlattened}) {
             {
                 // Calculate how much space is needed for the buttons at the bottom.
-                const int num_buttons = 3;
+                const int num_buttons = 4;
                 const float buttons_height = num_buttons * ImGui::GetFrameHeightWithSpacing();
 
                 // Put content in a scrollable child window.
@@ -153,12 +157,19 @@ namespace ThemeDetailsPopup {
                 {
                     Disabled disabled_if{isCurrent};
                     if (ImGui::Button(ICON_FA_STAR " Apply Theme", {-1, 0})) {
-                        Installer::SetCurrentTheme(installedThemeData.themePath);
+                        Installer::SetCurrentTheme(installedThemeData);
                         ImGui::CloseCurrentPopup();
                         ManageThemesScreen::force_refresh();
                         HomeScreen::force_refresh();
                     }
                     ImGui::SetItemDefaultFocus();
+                }
+
+                {
+                    Disabled if_no_previews{installedThemeData.previewPaths.empty()};
+                    if (ImGui::Button(ICON_FA_EYE " Preview", {-1, 0}))
+                        ThemePreviewPopup::open(installedThemeData.themePath,
+                                                installedThemeData.previewPaths);
                 }
 
                 if (ImGui::Button(ICON_FA_TRASH " Delete", {-1, 0})) {
@@ -184,9 +195,9 @@ namespace ThemeDetailsPopup {
                        ImGuiChildFlags_NavFlattened}) {
             {
                 Font title_font{nullptr, 50};
-                ImGui::TextWrapped(theme.name);
+                ImGui::TextWrapped(fullTheme.name);
             }
-            ImGui::TextWrapped("by %s", theme.creator.username.data());
+            ImGui::TextWrapped("by %s", fullTheme.creator.username.data());
 
             // Put content in a scrollable child window.
             if (Child content{"content",
@@ -197,25 +208,27 @@ namespace ThemeDetailsPopup {
                 if (ImGui::IsWindowAppearing())
                     ImGui::SetScrollY(0);
 
-                auto collage_img = ImageLoader::get(theme.collagePreview.sdUrl);
-                ImVec2 collage_size = {640, 360};
-                StyleVar no_padding{ImGuiStyleVar_FramePadding, {0, 0}};
-                // Center the image.
-                auto available = ImGui::GetContentRegionAvail();
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (available.x - collage_size.x) / 2);
-                if (ImGui::ImageButton("collagePreviewSD",
-                                       (ImTextureID)collage_img,
-                                       collage_size))
-                    ThemePreviewPopup::show(theme.hexId,
-                                            {
-                                                theme.collagePreview.hdUrl,
-                                                theme.launcherScreenshot.hdUrl,
-                                                theme.waraWaraPlazaScreenshot.hdUrl
-                                            });
+                if (!fullTheme.collagePreview.hdUrl.empty()) {
+                    ImVec2 preview_size = {640, 360};
+                    // Center the image.
+                    auto available = ImGui::GetContentRegionAvail();
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (available.x - preview_size.x) / 2);
+                    auto img = ImageLoader::get(fullTheme.collagePreview.sdUrl);
+                    StyleVar no_padding{ImGuiStyleVar_FramePadding, {0, 0}};
+                    if (ImGui::ImageButton("preview",
+                                           (ImTextureID)img,
+                                           preview_size))
+                        ThemePreviewPopup::open(fullTheme.hexId,
+                                                std::vector<std::string>{
+                                                    fullTheme.collagePreview.hdUrl,
+                                                    fullTheme.launcherScreenshot.hdUrl,
+                                                    fullTheme.waraWaraPlazaScreenshot.hdUrl
+                                                });
+                }
 
-                if (theme.description) {
+                if (fullTheme.description) {
                     Font small{nullptr, 24};
-                    ImGui::TextWrapped(*theme.description);
+                    ImGui::TextWrapped(*fullTheme.description);
                 }
             }
 
@@ -240,16 +253,16 @@ namespace ThemeDetailsPopup {
 
                 Font small{nullptr, 24};
                 StyleVar spacing{ImGuiStyleVar_ItemSpacing, {12, 10}};
-                show_label_text("QuickID:", theme.quickId);
-                show_label_text(ICON_FA_CALENDAR_PLUS_O, theme.createdAt.substr(0, 10));
+                show_label_text("QuickID:", fullTheme.quickId);
+                show_label_text(ICON_FA_CALENDAR_PLUS_O, fullTheme.createdAt.substr(0, 10));
                 ImGui::SetItemTooltip("Creation date");
-                show_label_text(ICON_FA_CALENDAR_CHECK_O,theme.updatedAt.substr(0, 10));
+                show_label_text(ICON_FA_CALENDAR_CHECK_O, fullTheme.updatedAt.substr(0, 10));
                 ImGui::SetItemTooltip("Update date");
-                show_label_text(ICON_FA_DOWNLOAD, std::to_string(theme.downloadCount));
+                show_label_text(ICON_FA_DOWNLOAD, std::to_string(fullTheme.downloadCount));
                 ImGui::SetItemTooltip("Number of downloads");
-                if (!theme.tags.empty()) {
+                if (!fullTheme.tags.empty()) {
                     ImGui::Separator();
-                    for (auto& tag : theme.tags)
+                    for (auto& tag : fullTheme.tags)
                         show_label_text(ICON_FA_TAG, tag.name);
                 }
             }
@@ -259,11 +272,11 @@ namespace ThemeDetailsPopup {
             ImGui::SetItemDefaultFocus();
 
             if (ImGui::Button(ICON_FA_EYE " Preview", {-1, 0}))
-                ThemePreviewPopup::show(theme.hexId,
-                                        {
-                                            theme.collagePreview.hdUrl,
-                                            theme.launcherScreenshot.hdUrl,
-                                            theme.waraWaraPlazaScreenshot.hdUrl
+                ThemePreviewPopup::open(fullTheme.hexId,
+                                        std::vector<std::string>{
+                                            fullTheme.collagePreview.hdUrl,
+                                            fullTheme.launcherScreenshot.hdUrl,
+                                            fullTheme.waraWaraPlazaScreenshot.hdUrl
                                         });
 
             if (ImGui::Button(ICON_FA_TIMES " Close", {-1, 0}))
@@ -296,7 +309,7 @@ namespace ThemeDetailsPopup {
         }
 
         switch (state) {
-            case State::waiting:
+            case State::waiting_themezer:
                 ImGui::Text("Fetching theme details...");
                 break;
 

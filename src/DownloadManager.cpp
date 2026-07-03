@@ -341,9 +341,8 @@ namespace DownloadManager {
         TRACE_FUNC;
     }
 
-    void clear_finished()
+    void clear_all()
     {
-        // TODO: this is wrong
         res->infos.clear();
     }
 

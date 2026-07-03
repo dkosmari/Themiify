@@ -45,8 +45,11 @@ sanitize_element(const std::filesystem::path& input);
 std::filesystem::path
 sanitize(const std::filesystem::path& input);
 
+std::string
+as_lower_case(const std::string& input);
+
 std::filesystem::path
-make_cached_thumbnail_filename(const std::string& hexId);
+theme_id_to_cached_thumbnail_path(const std::string& themeID);
 
 std::filesystem::path
 make_utheme_filename(const std::string& slug);

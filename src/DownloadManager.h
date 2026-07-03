@@ -63,7 +63,7 @@ namespace DownloadManager {
     cancel_all();
 
     void
-    clear_finished();
+    clear_all();
 
 
     bool

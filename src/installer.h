@@ -14,6 +14,7 @@
 #include <optional>
 #include <stop_token>
 #include <string>
+#include <vector>
 
 namespace Installer {
     struct UThemeMetadata {
@@ -26,14 +27,17 @@ namespace Installer {
     struct InstalledThemeMetadata {
         UThemeMetadata uthemeMetadata;
         std::filesystem::path themePath;
-        std::filesystem::path previewPath;
+        std::vector<std::filesystem::path> previewPaths;
         std::filesystem::path legacyMetadataPath;
     };
 
     bool GetUThemeMetadata(const std::filesystem::path &themePath,
                            UThemeMetadata &meta);
+
     bool GetInstalledThemeMetadata(const std::filesystem::path &installedThemePath,
                                    InstalledThemeMetadata &imeta);
+
+    std::vector<InstalledThemeMetadata> GetInstalledThemes();
 
     using progress_function_sig = void (const std::string &msg);
     using progress_function_t = std::function<progress_function_sig>;
@@ -50,12 +54,10 @@ namespace Installer {
                       progress_function_t progressCallback,
                       success_function_t successCallback,
                       error_function_t errorCallback);
-    bool DeleteTheme(const std::filesystem::path &themePath,
-                     const std::filesystem::path &metadataPath);
-    bool SetCurrentTheme(const std::filesystem::path &themePath);
+    void DeleteTheme(const InstalledThemeMetadata& meta);
+    bool SetCurrentTheme(const InstalledThemeMetadata &meta);
     std::string GetCurrentThemeName();
     std::optional<InstalledThemeMetadata> GetCurrentTheme();
 
     std::filesystem::path GetThemePath(const UThemeMetadata& meta);
-    // std::filesystem::path GetThumbnailPath(const InstalledThemeMetadata& imeta);
 } // namespace Installer

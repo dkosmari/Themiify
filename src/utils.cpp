@@ -28,7 +28,7 @@ void DeletePath(const std::filesystem::path& inputPath) {
         return;
     }
     if (!exists(inputPath)) {
-        cerr << inputPath << " could not be found!" << endl;
+        // cerr << inputPath << " could not be found!" << endl;
         return;
     }
 
@@ -120,9 +120,19 @@ sanitize(const std::filesystem::path& input) {
     return output;
 }
 
+std::string
+as_lower_case(const std::string& input)
+{
+    std::string output = input;
+    for (char &c : output)
+        c = std::tolower(static_cast<unsigned char>(c));
+    return output;
+}
+
 std::filesystem::path
-make_cached_thumbnail_filename(const std::string& hexId) {
-    return THEMIIFY_THUMBNAILS / ("Themezer" + hexId + ".webp");
+theme_id_to_cached_thumbnail_path(const std::string& themeID)
+{
+    return THEMIIFY_THUMBNAILS / (make_theme_id_filename(themeID) + ".webp");
 }
 
 std::filesystem::path

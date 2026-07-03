@@ -45,32 +45,16 @@ namespace DownloadThemePopup {
     std::filesystem::path utheme_filename;
 
     std::string transfer_name;
-    std::vector<std::string> error_messages;
-
-    struct Transfer {
-        std::string url;
-        std::filesystem::path filename;
-    };
-
-    std::vector<Transfer> transfers;
-    std::size_t success_count = 0;
-    std::size_t error_count = 0;
+    std::string error_message;
 
     bool set_current = true;
 
     void open(const ThemezerAPI::WiiuThemeSmall &theme_data) {
         state = State::queued;
         transfer_name = theme_data.name;
-        transfers.clear();
-        // transfers.emplace_back(theme_data.collagePreview.tinyUrl,
-        //                        make_thumbnail_filename(theme_data.hexId));
-        transfers.emplace_back(theme_data.downloadUrl,
-                               make_utheme_filename(theme_data.slug));
         utheme_url = theme_data.downloadUrl;
         utheme_filename = make_utheme_filename(theme_data.slug);
-        error_messages.clear();
-        success_count = 0;
-        error_count = 0;
+        error_message.clear();
     }
 
     void show_confirmation() {
@@ -111,28 +95,20 @@ namespace DownloadThemePopup {
 
         if (ImGui::Button(download_label, button_size)) {
             state = State::downloading;
-            for (const auto& transfer : transfers)
-                if (!DownloadManager::add(transfer.url,
-                                          transfer.filename,
-                                          [](const DownloadManager::Info& info)
+            if (!DownloadManager::add(utheme_url,
+                                      utheme_filename,
+                                      [](const DownloadManager::Info& info)
                                           {
                                               cout << "Finished " << info.filename << endl;
-                                              ++success_count;
-                                              if (success_count + error_count == transfers.size()) {
-                                                  if (error_count == 0)
-                                                      state = State::success;
-                                                  else
-                                                      state = State::error;
-                                              }
+                                              state = State::success;
                                           },
                                           [](const std::exception& e)
                                           {
-                                              ++error_count;
-                                              error_messages.push_back(e.what());
                                               state = State::error;
+                                              error_message = e.what();
                                           })) {
                     state = State::error;
-                    error_messages.push_back("Failed to queue download transfer");
+                    error_message = "Failed to queue download transfer";
                 }
         }
         ImGui::SetItemDefaultFocus();
@@ -169,11 +145,6 @@ namespace DownloadThemePopup {
                              - ImGui::GetFrameHeight());
 
         ImGui::ProgressBar(info->progress);
-
-        if (info->progress >= 1.0f) {
-            DownloadManager::clear_finished();
-            state = State::success;
-        }
 
         // TODO: downloads should be cancelable, should have a cancel button here.
     }
@@ -231,6 +202,16 @@ namespace DownloadThemePopup {
         }
     }
 
+    void show_error() {
+        ImGui::Text("ERROR!");
+        ImGui::TextWrapped(error_message);
+
+        if (ImGui::Button("Close")) {
+            DownloadManager::clear_all();
+            state = State::hidden;
+        }
+    }
+
     void process_ui() {
         using namespace ImGui::RAII;
         if (state == State::hidden)
@@ -269,17 +250,7 @@ namespace DownloadThemePopup {
                 break;
 
             case State::error:
-                // TODO
-                ImGui::Text("ERROR!");
-                for (const auto& msg : error_messages)
-                    ImGui::TextWrapped(msg);
-
-                if (success_count + error_count == transfers.size()) {
-                    if (ImGui::Button("Close")) {
-                        DownloadManager::clear_finished();
-                        state = State::hidden;
-                    }
-                }
+                show_error();
                 break;
 
             case State::success:

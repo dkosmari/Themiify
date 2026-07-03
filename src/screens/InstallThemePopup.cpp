@@ -220,7 +220,10 @@ namespace InstallThemePopup {
                                             success_handler,
                                             error_handler);
                     if (state == State::success && set_current) {
-                        Installer::SetCurrentTheme(Installer::GetThemePath(theme_data));
+                        auto theme_path = Installer::GetThemePath(theme_data);
+                        Installer::InstalledThemeMetadata imeta;
+                        if (Installer::GetInstalledThemeMetadata(theme_path, imeta))
+                            Installer::SetCurrentTheme(imeta);
                     }
                 });
 

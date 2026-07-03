@@ -163,17 +163,29 @@ namespace ThemezerScreen {
         cout << "Hello from ThemezerScreen finalize!" << endl;
     }
 
-    void show(const WiiuThemeSmall& theme, const ImVec2& inner_size, const ImVec2& padding)
-    {
+    static void text_limited(float width, const std::string& text) {
+        // WORKAROUND: prevent tooltip.
+        auto& io = ImGui::GetIO();
+        auto old_mouse_pos = io.MousePos;
+        ImGui::TextAligned(0.0f, width, text);
+        io.MousePos = old_mouse_pos;
+    }
+
+    void show(const WiiuThemeSmall& theme,
+              const ImVec2& inner_size,
+              const ImVec2& padding) {
         // NOTE: to create a complex button, we create a button with no text, then overlap
         // the contents.
         using namespace ImGui::RAII;
+
+        ID id{theme.hexId};
+
         const auto& style = ImGui::GetStyle();
         const ImVec2 outer_size = inner_size + 2 * padding;
         ImVec2 start_pos = ImGui::GetCursorPos() + padding;
 
-        if (ImGui::Button("##btn" + theme.hexId, outer_size)) {
-            ThemeDetailsPopup::open_themezer(theme.hexId, theme);
+        if (ImGui::Button("##button", outer_size)) {
+            ThemeDetailsPopup::open_themezer(theme);
         }
 
         // NOTE: when hovered or activated, change the text color to the window bg color.
@@ -188,14 +200,14 @@ namespace ThemezerScreen {
 
         {
             StyleVar no_border{ImGuiStyleVar_ImageBorderSize, 0};
-            auto thumbnail = ImageLoader::get(theme.collagePreview.tinyUrl);
+            auto img = ImageLoader::get(theme.collagePreview.tinyUrl);
             ImVec2 img_size = {inner_size.x, inner_size.x * 9.0f / 16.0f};
-            ImGui::Image((ImTextureID)thumbnail, img_size);
+            ImGui::Image((ImTextureID)img, img_size);
         }
 
         {
             Font font{nullptr, 24};
-            ImGui::TextAligned(0.0f, inner_size.x, theme.name);
+            text_limited(inner_size.x, theme.name);
         }
 
         {
@@ -205,8 +217,7 @@ namespace ThemezerScreen {
                 + std::to_string(theme.downloadCount);
             float downloads_width = ImGui::CalcTextSize(downloads_label).x;
             float author_width = inner_size.x - downloads_width - style.ItemSpacing.x;
-            ImGui::TextAligned(0.0f, author_width,
-                               "by %s", theme.creator.username.data());
+            text_limited(author_width, "by " + theme.creator.username);
             ImGui::SameLine();
             ImGui::SetCursorPosX(start_pos.x + inner_size.x - downloads_width);
             ImGui::Text(downloads_label);
@@ -223,8 +234,8 @@ namespace ThemezerScreen {
             StyleColor green_bg{ImGuiCol_ChildBg, {0.0, 0.5, 0.0, 1.0}};
 #endif
             auto &style = ImGui::GetStyle();
-            // auto orig_padding = style.WindowPadding;
-            StyleVar small_padding{ImGuiStyleVar_WindowPadding, {0, style.WindowPadding.y}};
+            // Remove horizontal padding.
+            StyleVar no_hori_padding{ImGuiStyleVar_WindowPadding, {0, style.WindowPadding.y}};
             if (Child themezer_content{"ThemezerContent",
                                        {0, 0},
                                        ImGuiChildFlags_NavFlattened |
@@ -361,7 +372,7 @@ namespace ThemezerScreen {
 #ifdef DEBUG_BG_COLOR
                     StyleColor brown_bg{ImGuiCol_ChildBg, {0.3, 0.3, 0.0, 1.0}};
 #endif
-                    if (Child theme_list{"ThemeList", {0, 0}, ImGuiChildFlags_AlwaysUseWindowPadding}) {
+                    if (Child theme_list{"ThemeGrid"}) {
 
                         if (scroll_to_top) {
                             scroll_to_top = false;
@@ -400,13 +411,13 @@ namespace ThemezerScreen {
                                 ImGui::Text("Waiting for Themezer to respond...");
                             }
                             else {
-                                ImVec2 start_pos = ImGui::GetCursorPos();
+                                const ImVec2 grid_start_pos = ImGui::GetCursorPos();
+                                const ImVec2 outer_size = inner_size + 2 * padding;
+                                const ImVec2 spacing = {18, 18};
                                 for (auto [idx, theme] : *new_themes | std::views::enumerate) {
-                                    const ImVec2 outer_size = inner_size + 2 * padding;
-                                    const ImVec2 spacing = {18, 18};
                                     ImVec2 grid_pos = { float(idx % 3), float(idx / 3) };
                                     ImVec2 pos = grid_pos * (outer_size + spacing);
-                                    ImGui::SetCursorPos(start_pos + pos);
+                                    ImGui::SetCursorPos(grid_start_pos + pos);
                                     show(theme, inner_size, padding);
                                 }
                             }

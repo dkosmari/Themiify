@@ -193,8 +193,8 @@ namespace HomeScreen {
                     ImGuiWindowFlags_NoSavedSettings
                 };
 
-                if (!current_theme_data->previewPath.empty()) {
-                    auto img = ImageLoader::get(current_theme_data->previewPath);
+                if (!current_theme_data->previewPaths.empty()) {
+                    auto img = ImageLoader::get(current_theme_data->previewPaths.front());
                     ImGui::Image((ImTextureID)img, {426, 240});
                     ImGui::SameLine();
                 }

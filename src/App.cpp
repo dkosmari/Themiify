@@ -48,7 +48,7 @@
 // #define DEBUG_BG_COLOR
 
 // Enable to get access to the style editor.
-#define ENABLE_STYLE_EDITOR
+// #define ENABLE_STYLE_EDITOR
 
 using std::cout;
 using std::cerr;

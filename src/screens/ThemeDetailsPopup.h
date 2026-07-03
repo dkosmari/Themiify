@@ -16,8 +16,7 @@
 #include "../ThemezerAPI.h"
 
 namespace ThemeDetailsPopup {
-    void open_themezer(const std::string& request_id,
-                       const ThemezerAPI::WiiuThemeSmall &small_theme);
+    void open_themezer(const ThemezerAPI::WiiuThemeSmall &small_theme);
 
     void open_local(const Installer::InstalledThemeMetadata& installed_theme_data,
                     bool is_current);
