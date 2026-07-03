@@ -29,6 +29,7 @@ namespace Installer {
         std::filesystem::path themePath;
         std::vector<std::filesystem::path> previewPaths;
         std::filesystem::path legacyMetadataPath;
+        std::vector<std::filesystem::path> files;
     };
 
     bool GetUThemeMetadata(const std::filesystem::path &themePath,

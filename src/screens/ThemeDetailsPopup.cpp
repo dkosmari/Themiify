@@ -130,7 +130,20 @@ namespace ThemeDetailsPopup {
                         ThemePreviewPopup::open(installedThemeData.themePath,
                                                 installedThemeData.previewPaths);
                 }
-                // TODO: show more info? SD card path? List theme files?
+
+                if (!installedThemeData.files.empty()) {
+                    ImGui::SeparatorText("Files:");
+                    Font file_font{nullptr, 20};
+                    const std::string prefix = installedThemeData.themePath.string() + "/";
+                    for (const auto& filename : installedThemeData.files) {
+                        std::string label = filename;
+                        if (label.starts_with(prefix))
+                            label.erase(0, prefix.size());
+                        ImGui::Bullet();
+                        ImGui::SameLine();
+                        ImGui::TextAligned(0, -1, label);
+                    }
+                }
             }
         }
 

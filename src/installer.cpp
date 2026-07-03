@@ -190,6 +190,17 @@ namespace Installer {
         try {
             imeta = {};
             imeta.themePath = installedThemePath;
+            try {
+                for (auto& entry
+                         : std::filesystem::recursive_directory_iterator{imeta.themePath}) {
+                    if (entry.is_regular_file())
+                        imeta.files.push_back(entry.path());
+                }
+                std::ranges::sort(imeta.files, {}, as_lower_case);
+            }
+            catch (std::exception &e) {
+                cerr << "Error listing files inside theme. SD card may be corrupted." << endl;
+            }
 
             static const std::array image_names{
                 "preview-collage",
