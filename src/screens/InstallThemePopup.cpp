@@ -18,6 +18,7 @@
 
 #include "InstallThemePopup.h"
 #include "ManageThemesScreen.h"
+#include "HomeScreen.h"
 #include "../utils.h"
 #include "../installer.h"
 #include "../thread_safe.hpp"
@@ -301,6 +302,7 @@ namespace InstallThemePopup {
                     ImGui::CloseCurrentPopup();
                     state = State::hidden;
                     ManageThemesScreen::refresh_all();
+                    HomeScreen::force_refresh();
                 }
                 ImGui::SetItemDefaultFocus();
 
@@ -310,6 +312,7 @@ namespace InstallThemePopup {
                     ImGui::CloseCurrentPopup();
                     state = State::hidden;
                     ManageThemesScreen::refresh_all();
+                    HomeScreen::force_refresh();
                 }
 
                 break;

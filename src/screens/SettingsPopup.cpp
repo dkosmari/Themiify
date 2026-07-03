@@ -423,6 +423,8 @@ namespace SettingsPopup {
                     state = State::checking_integrity;
                 }
 
+                ImGui::SameLine();
+
                 if (ImGui::Button("Close", button_size)) {
                     ImGui::CloseCurrentPopup();
                     state = State::hidden;
@@ -551,6 +553,8 @@ namespace SettingsPopup {
 
                     state = State::dumping;
                 }
+
+                ImGui::SameLine();
 
                 if (ImGui::Button("Close", button_size)) {
                     ImGui::CloseCurrentPopup();
