@@ -39,8 +39,8 @@ namespace ThemePreviewPopup {
         bool popup_queued;
         const std::string popup_id = "ThemePreviewPopup"s;
 
-        std::string hex_id;
-        std::vector<std::string> url_list;
+        std::string unique_id;
+        std::vector<std::string> image_list;
 
         bool hide_ui;
 
@@ -58,12 +58,22 @@ namespace ThemePreviewPopup {
 
     } // namespace
 
-    void show(const std::string& hexId, const std::vector<std::string>& urlList) {
+    void open(const std::string& id, const std::vector<std::string>& images) {
         state = State::visible;
         popup_queued = true;
         hide_ui = false;
-        hex_id = hexId;
-        url_list = urlList;
+        unique_id = id;
+        image_list = images;
+    }
+
+    void open(const std::string& id, const std::vector<std::filesystem::path>& images) {
+        state = State::visible;
+        popup_queued = true;
+        hide_ui = false;
+        unique_id = id;
+        image_list.clear();
+        for (auto& img : images)
+            image_list.push_back(img);
     }
 
     void process_ui() {
@@ -95,7 +105,7 @@ namespace ThemePreviewPopup {
 
         // Push a unique ID to the ID stack, to avoid reusing the carousel state from a
         // different theme.
-        ID carousel_unique_id{hex_id};
+        ID carousel_unique_id{unique_id};
 
         ImVec2 page_size = viewport->Size;
         ImGuiCarouselSpecs specs{
@@ -107,10 +117,10 @@ namespace ThemePreviewPopup {
         StyleVar carousel_no_rounding {ImGuiStyleVar_ChildRounding, 0};
         if (Carousel images_carousel{"images_carousel", page_size, specs}) {
 
-            for (auto [idx, url] : url_list | std::views::enumerate) {
+            for (auto [idx, location] : image_list | std::views::enumerate) {
                 if (idx > 0)
                     ImGui::SameLine();
-                auto tex = ImageLoader::get(url);
+                auto tex = ImageLoader::get(location);
                 ImGui::SetNextItemAllowOverlap();
                 ImGui::Image((ImTextureID)tex, page_size);
             }
@@ -132,14 +142,14 @@ namespace ThemePreviewPopup {
                 const bool is_first_page = page_x <= 0;
                 const bool is_last_page = page_x >= columns - 1;
 
-                ImVec2 arrow_button_size{120.0f, 60.0f};
+                ImVec2 arrow_button_size{120.0f, ImGui::GetFrameHeight()};
                 float middle_y = viewport->Pos.y + (viewport->Size.y - arrow_button_size.y) * 0.5f;
                 float padding = 30.0f;
 
-                ImVec2 button_size{160.0f, 60.0f};
-                ImVec2 text_box_size{220.0f, 60.0f};
+                ImVec2 button_size{160.0f, ImGui::GetFrameHeight()};
+                ImVec2 text_box_size{220.0f, ImGui::GetFrameHeight()};
 
-                float spacing = 20.0f;
+                float spacing = style.ItemSpacing.x;
 
                 float total_width = button_size.x + spacing + text_box_size.x + spacing + button_size.x;
 

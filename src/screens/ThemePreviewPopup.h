@@ -9,11 +9,13 @@
 
 #pragma once
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
 namespace ThemePreviewPopup {
-    void show(const std::string& hexId, const std::vector<std::string>& urlList);
+    void open(const std::string& id, const std::vector<std::string>& images);
+    void open(const std::string& id, const std::vector<std::filesystem::path>& images);
 
     void process_ui();
 }

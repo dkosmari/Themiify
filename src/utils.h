@@ -1,6 +1,6 @@
 /*
  * Themiify - A theme manager for the Nintendo Wii U
- * Copyright (C) 2026 Fangal-Airbag  
+ * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
  * Copyright (C) 2026  Daniel K. O. <dkosmari>
  *
@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <string>
+#include <optional>
 #include <filesystem>
 
 #ifndef THEMIIFY_VERSION
@@ -38,5 +39,24 @@ bool CreateParentDirectories(const std::filesystem::path& inputPath);
 
 void DeletePath(const std::filesystem::path& inputPath);
 
-std::filesystem::path sanitize_element(const std::filesystem::path& input);
-std::filesystem::path sanitize(const std::filesystem::path& input);
+std::filesystem::path
+sanitize_element(const std::filesystem::path& input);
+
+std::filesystem::path
+sanitize(const std::filesystem::path& input);
+
+std::string
+as_lower_case(const std::string& input);
+
+std::filesystem::path
+theme_id_to_cached_thumbnail_path(const std::string& themeID);
+
+std::filesystem::path
+make_utheme_filename(const std::string& slug, const std::string& hexID);
+
+std::string
+make_theme_id_filename(const std::string& themeID);
+
+std::filesystem::path
+make_theme_folder_name(const std::string& name,
+                       const std::optional<std::string>& themeID);

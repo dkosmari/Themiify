@@ -16,10 +16,11 @@
 #include <imgui_raii.h>
 
 #include "ThemeDetailsPopup.h"
-#include "ThemePreviewPopup.h"
-#include "DownloadThemePopup.h"
 #include "DeleteThemePopup.h"
+#include "DownloadThemePopup.h"
+#include "HomeScreen.h"
 #include "ManageThemesScreen.h"
+#include "ThemePreviewPopup.h"
 #include "../App.h"
 #include "../installer.h"
 #include "../DownloadManager.h"
@@ -39,7 +40,7 @@ using ThemezerAPI::WiiuThemeSmall;
 namespace ThemeDetailsPopup {
     enum class State {
         hidden,
-        waiting,
+        waiting_themezer,
         ready_themezer,
         ready_local,
         error,
@@ -49,36 +50,251 @@ namespace ThemeDetailsPopup {
     State state;
     std::string hexId;
     std::string error;
-    WiiuThemeFull theme;
+    WiiuThemeFull fullTheme;
     WiiuThemeSmall smallTheme;
-    Installer::installed_theme_data installedThemeData;
-    SDL_Texture *localPreview;
+    Installer::InstalledThemeMetadata installedThemeData;
     const std::string popup_id = "ThemeDetailsPopup"s;
     bool isCurrent;
 
-    void show_themezer(const std::string& request_id, const WiiuThemeSmall &small_theme) {
+    void open_themezer(const WiiuThemeSmall &small_theme) {
         popup_queued = true;
-        hexId = request_id;
+        hexId = small_theme.hexId;
         state = State::hidden;
         error.clear();
-        theme = {};
+        fullTheme = {};
         smallTheme = small_theme;
         ThemezerAPI::wiiu::theme(hexId,
                                  [](const WiiuThemeFull& t)
                                  {
                                     cout << "Got theme!" << endl;
-                                    theme = t;
+                                    fullTheme = t;
                                     state = State::ready_themezer;
                                  });
-        state = State::waiting;
+        state = State::waiting_themezer;
     }
 
-    void show_local(Installer::installed_theme_data installed_theme_data, SDL_Texture *local_preview, bool is_current) {
+    void open_local(const Installer::InstalledThemeMetadata& installed_theme_data,
+                    bool is_current) {
         popup_queued = true;
         installedThemeData = installed_theme_data;
-        localPreview = local_preview;
         state = State::ready_local;
         isCurrent = is_current;
+    }
+
+    void show_label_text(const std::string& label,
+                         const std::string& text)
+    {
+        const auto colors = ImGui::GetStyle().Colors;
+        {
+            ImGui::RAII::StyleColor label_color{ImGuiCol_Text, colors[ImGuiCol_HeaderActive]};
+            ImGui::Text(label);
+        }
+        ImGui::SameLine();
+        ImGui::TextWrapped(text);
+    }
+
+    void show_local() {
+        using namespace ImGui::RAII;
+        const auto &style = ImGui::GetStyle();
+
+        // Split the window into two child windows: left and right
+        const float total_width = ImGui::GetContentRegionAvail().x;
+        float right_width = 300;
+        float left_width = total_width - right_width - style.ItemSpacing.x;
+
+        if (Child left{"left", {left_width, 0}, ImGuiChildFlags_NavFlattened}) {
+            {
+                Font title_font{nullptr, 50};
+                ImGui::TextWrapped(installedThemeData.uthemeMetadata.themeName);
+            }
+            if (installedThemeData.uthemeMetadata.themeAuthor)
+                ImGui::TextWrapped("by " + *installedThemeData.uthemeMetadata.themeAuthor);
+
+            // Put content in a scrollable child window.
+            if (Child content{"content", {0, 0},
+                              ImGuiChildFlags_NavFlattened
+                              | ImGuiChildFlags_AlwaysUseWindowPadding}) {
+                // Always scroll to the top when the popup first appears.
+                if (ImGui::IsWindowAppearing())
+                    ImGui::SetScrollY(0);
+
+                if (!installedThemeData.previewPaths.empty()) {
+                    ImVec2 preview_size {640, 360};
+                    // Center the image.
+                    auto available = ImGui::GetContentRegionAvail();
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (available.x - preview_size.x)
+                                         / 2);
+                    auto img = ImageLoader::get(installedThemeData.previewPaths.front());
+                    StyleVar no_padding{ImGuiStyleVar_FramePadding, {0, 0}};
+                    if (ImGui::ImageButton("preview", (ImTextureID)img, preview_size))
+                        ThemePreviewPopup::open(installedThemeData.themePath,
+                                                installedThemeData.previewPaths);
+                }
+
+                if (!installedThemeData.files.empty()) {
+                    ImGui::SeparatorText("Files:");
+                    Font file_font{nullptr, 20};
+                    const std::string prefix = installedThemeData.themePath.string() + "/";
+                    for (const auto& filename : installedThemeData.files) {
+                        std::string label = filename;
+                        if (label.starts_with(prefix))
+                            label.erase(0, prefix.size());
+                        ImGui::Bullet();
+                        ImGui::SameLine();
+                        ImGui::TextAligned(0, -1, label);
+                    }
+                }
+            }
+        }
+
+        ImGui::SameLine();
+
+        if (Child right{"right", {right_width, 0}, ImGuiChildFlags_NavFlattened}) {
+            {
+                // Calculate how much space is needed for the buttons at the bottom.
+                const int num_buttons = 4;
+                const float buttons_height = num_buttons * ImGui::GetFrameHeightWithSpacing();
+
+                // Put content in a scrollable child window.
+                if (Child content{"content", {0 , -buttons_height},
+                                  ImGuiChildFlags_NavFlattened
+                                  | ImGuiChildFlags_AlwaysUseWindowPadding}) {
+                    if (installedThemeData.uthemeMetadata.themeVersion) {
+                        Font small{nullptr, 24};
+                        show_label_text(ICON_FA_CALENDAR_CHECK_O,
+                                        installedThemeData.uthemeMetadata.themeVersion->substr(0, 10));
+                        ImGui::SetItemTooltip("Theme version.");
+                    }
+                }
+
+                {
+                    Disabled disabled_if{isCurrent};
+                    if (ImGui::Button(ICON_FA_STAR " Apply Theme", {-1, 0})) {
+                        Installer::SetCurrentTheme(installedThemeData);
+                        ImGui::CloseCurrentPopup();
+                        HomeScreen::force_refresh();
+                        ManageThemesScreen::refresh_current_theme();
+                    }
+                    ImGui::SetItemDefaultFocus();
+                }
+
+                {
+                    Disabled if_no_previews{installedThemeData.previewPaths.empty()};
+                    if (ImGui::Button(ICON_FA_EYE " Preview", {-1, 0}))
+                        ThemePreviewPopup::open(installedThemeData.themePath,
+                                                installedThemeData.previewPaths);
+                }
+
+                if (ImGui::Button(ICON_FA_TRASH " Delete", {-1, 0})) {
+                    DeleteThemePopup::open(installedThemeData);
+                }
+
+                if (ImGui::Button(ICON_FA_TIMES " Close", {-1, 0}))
+                    ImGui::CloseCurrentPopup();
+            }
+        }
+    }
+
+    void show_themezer() {
+        using namespace ImGui::RAII;
+        const auto &style = ImGui::GetStyle();
+
+        // Split the window into two child windows: left and right
+        const float total_width = ImGui::GetContentRegionAvail().x;
+        float right_width = 300;
+        float left_width = total_width - right_width - style.ItemSpacing.x;
+
+        if (Child left{"left", {left_width, 0},
+                       ImGuiChildFlags_NavFlattened}) {
+            {
+                Font title_font{nullptr, 50};
+                ImGui::TextWrapped(fullTheme.name);
+            }
+            ImGui::TextWrapped("by %s", fullTheme.creator.username.data());
+
+            // Put content in a scrollable child window.
+            if (Child content{"content",
+                              {0, 0},
+                              ImGuiChildFlags_NavFlattened
+                              | ImGuiChildFlags_AlwaysUseWindowPadding}) {
+                // Always scroll to the top when the popup first appears.
+                if (ImGui::IsWindowAppearing())
+                    ImGui::SetScrollY(0);
+
+                if (!fullTheme.collagePreview.hdUrl.empty()) {
+                    ImVec2 preview_size = {640, 360};
+                    // Center the image.
+                    auto available = ImGui::GetContentRegionAvail();
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (available.x - preview_size.x) / 2);
+                    auto img = ImageLoader::get(fullTheme.collagePreview.sdUrl);
+                    StyleVar no_padding{ImGuiStyleVar_FramePadding, {0, 0}};
+                    if (ImGui::ImageButton("preview",
+                                           (ImTextureID)img,
+                                           preview_size))
+                        ThemePreviewPopup::open(fullTheme.hexId,
+                                                std::vector<std::string>{
+                                                    fullTheme.collagePreview.hdUrl,
+                                                    fullTheme.launcherScreenshot.hdUrl,
+                                                    fullTheme.waraWaraPlazaScreenshot.hdUrl
+                                                });
+                }
+
+                if (fullTheme.description) {
+                    Font small{nullptr, 24};
+                    ImGui::TextWrapped(*fullTheme.description);
+                }
+            }
+
+        }
+
+        ImGui::SameLine();
+
+        if (Child right{"right", {right_width, 0},
+                        ImGuiChildFlags_NavFlattened}) {
+
+            // Calculate how much space is needed for the buttons at the bottom.
+            const int num_buttons = 3;
+            const float buttons_height = num_buttons * ImGui::GetFrameHeightWithSpacing();
+
+            // Put content in a scrollable child window.
+            if (Child content{"content", {0, -buttons_height},
+                              ImGuiChildFlags_NavFlattened |
+                              ImGuiChildFlags_AlwaysUseWindowPadding}) {
+                // Always scroll to the top when the popup first appears.
+                if (ImGui::IsWindowAppearing())
+                    ImGui::SetScrollY(0);
+
+                Font small{nullptr, 24};
+                StyleVar spacing{ImGuiStyleVar_ItemSpacing, {12, 10}};
+                show_label_text("QuickID:", fullTheme.quickId);
+                show_label_text(ICON_FA_CALENDAR_PLUS_O, fullTheme.createdAt.substr(0, 10));
+                ImGui::SetItemTooltip("Creation date");
+                show_label_text(ICON_FA_CALENDAR_CHECK_O, fullTheme.updatedAt.substr(0, 10));
+                ImGui::SetItemTooltip("Update date");
+                show_label_text(ICON_FA_DOWNLOAD, std::to_string(fullTheme.downloadCount));
+                ImGui::SetItemTooltip("Number of downloads");
+                if (!fullTheme.tags.empty()) {
+                    ImGui::Separator();
+                    for (auto& tag : fullTheme.tags)
+                        show_label_text(ICON_FA_TAG, tag.name);
+                }
+            }
+
+            if (ImGui::Button(ICON_FA_DOWNLOAD " Download", {-1, 0}))
+                DownloadThemePopup::open(smallTheme);
+            ImGui::SetItemDefaultFocus();
+
+            if (ImGui::Button(ICON_FA_EYE " Preview", {-1, 0}))
+                ThemePreviewPopup::open(fullTheme.hexId,
+                                        std::vector<std::string>{
+                                            fullTheme.collagePreview.hdUrl,
+                                            fullTheme.launcherScreenshot.hdUrl,
+                                            fullTheme.waraWaraPlazaScreenshot.hdUrl
+                                        });
+
+            if (ImGui::Button(ICON_FA_TIMES " Close", {-1, 0}))
+                ImGui::CloseCurrentPopup();
+        }
     }
 
     void process_ui() {
@@ -92,9 +308,9 @@ namespace ThemeDetailsPopup {
             popup_queued = false;
         }
 
-        auto center = ImGui::GetMainViewport()->GetCenter();
         auto viewport = ImGui::GetMainViewport();
-        ImGui::SetNextWindowSize(viewport->Size * 0.85f, ImGuiCond_Always);
+        auto center = viewport->GetCenter();
+        ImGui::SetNextWindowSize({1140, 680}, ImGuiCond_Always);
         ImGui::SetNextWindowPos(center, ImGuiCond_Always, {0.5f, 0.5f});
         Popup popup{popup_id,
                     ImGuiWindowFlags_NoSavedSettings |
@@ -106,7 +322,7 @@ namespace ThemeDetailsPopup {
         }
 
         switch (state) {
-            case State::waiting:
+            case State::waiting_themezer:
                 ImGui::Text("Fetching theme details...");
                 break;
 
@@ -114,147 +330,13 @@ namespace ThemeDetailsPopup {
                 ImGui::TextWrapped("Error: %s", error.data());
                 break;
 
-            case State::ready_themezer: {
-                ImGui::Text("Theme details");
-                ImGui::Separator();
-
-                ImGui::TextWrapped("Name: %s", theme.name.data());
-
-                float footer_height = ImGui::GetFrameHeightWithSpacing();
-                if (Child contents{"contents", {0, -footer_height}}) {
-                    // Always scroll to the top when the popup first appears.
-                    if (ImGui::IsWindowAppearing())
-                        ImGui::SetScrollY(0);
-
-                    ImGui::TextWrapped("Created: %s", theme.createdAt.data());
-                    if (!theme.updatedAt.empty() && theme.updatedAt != theme.createdAt)
-                        ImGui::TextWrapped("Updated: %s", theme.updatedAt.data());
-
-                    ImGui::Text("Downloads: %u", theme.downloadCount);
-
-                    ImGui::TextWrapped("Author: %s", theme.creator.username.data());
-
-                    if (theme.creator.avatarUrl) {
-                        ImGui::SameLine();
-                        auto avatar = ImageLoader::get(*theme.creator.avatarUrl);
-                        ImGui::Image((ImTextureID)avatar, {64, 64});
-                        ImGui::SetItemTooltip(*theme.creator.avatarUrl);
-                    }
-
-                    ImGui::Text("Tags:");
-                    ImGui::Indent();
-                    for (auto& tag : theme.tags)
-                        ImGui::Text(ICON_FA_TAG " %s", tag.name.data());
-                    ImGui::Unindent();
-
-                    auto collageImg = ImageLoader::get(theme.collagePreview.sdUrl);
-                    float collageWidth = 720;
-                    ImGui::SetCursorPosX(
-                        ImGui::GetCursorPosX() +
-                        (ImGui::GetContentRegionAvail().x - collageWidth) * 0.5f
-                    );
-
-                    {
-                        StyleVar no_padding{ImGuiStyleVar_FramePadding, {0.0f, 0.0f}};
-                        if (ImGui::ImageButton("collagePreviewSD",
-                                               (ImTextureID)collageImg,
-                                               {collageWidth, 405})) {
-                            ThemePreviewPopup::show(theme.hexId,
-                                                    {
-                                                        theme.launcherScreenshot.hdUrl,
-                                                        theme.waraWaraPlazaScreenshot.hdUrl,
-                                                        theme.collagePreview.hdUrl
-                                                    }
-                            );
-                        }
-                    }
-
-                }
-
-                // Footer area: action buttons, always visible.
-
-                if (ImGui::Button("Download")) {
-                    DownloadThemePopup::show(smallTheme);
-                }
-
-                ImGui::SameLine();
-
-                {
-                    // align button to the right
-                    const auto &style = ImGui::GetStyle();
-                    std::string text = "Preview Theme";
-                    auto button_size = ImGui::CalcTextSize(text) + 2 * style.FramePadding;
-                    auto available = ImGui::GetContentRegionAvail();
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + available.x - button_size.x);
-                    if (ImGui::Button(text)) {
-                        ThemePreviewPopup::show(theme.hexId,
-                                                {
-                                                    theme.launcherScreenshot.hdUrl,
-                                                    theme.waraWaraPlazaScreenshot.hdUrl,
-                                                    theme.collagePreview.hdUrl
-                                                }
-                        );
-                    }
-                }
-
+            case State::ready_themezer:
+                show_themezer();
                 break;
-            }
 
-            case State::ready_local: {
-                ImGui::Text("Theme details");
-                ImGui::Separator();
-                ImGui::TextWrapped("Name: %s", installedThemeData.themeName.c_str());
-
-                float footer_height = ImGui::GetFrameHeightWithSpacing();
-                if (Child contents{"contents", {0, -footer_height}}) {
-                    // Always scroll to the top when the popup first appears.
-                    if (ImGui::IsWindowAppearing())
-                        ImGui::SetScrollY(0);
-
-                    ImGui::TextWrapped("Author: %s", installedThemeData.themeAuthor.c_str());
-                    ImGui::TextWrapped("Theme Version: %s", installedThemeData.themeVersion.c_str());
-
-                    float collageWidth = 720;
-                    ImGui::SetCursorPosX(
-                        ImGui::GetCursorPosX() +
-                        (ImGui::GetContentRegionAvail().x - collageWidth) * 0.5f
-                    );
-
-                    {
-                        StyleVar no_padding{ImGuiStyleVar_FramePadding, {0.0f, 0.0f}};
-                        ImGui::ImageButton("collagePreviewSD",
-                                           (ImTextureID)localPreview,
-                                           {collageWidth, 405});
-                    }
-                }
-
-                // Footer area: action buttons, always visible.
-                {
-                    Disabled disabled_if{isCurrent};
-                    if (ImGui::Button(ICON_FA_STAR " Make Default")) {
-                        Installer::SetCurrentTheme(installedThemeData.themeName, installedThemeData.themeIDPath);
-                        ImGui::CloseCurrentPopup();
-                        ManageThemesScreen::force_refresh();
-                    }
-                }
-
-                ImGui::SameLine();
-
-                {
-                    // align button to the right
-                    const auto &style = ImGui::GetStyle();
-                    std::string text = ICON_FA_TRASH " Delete";
-                    auto button_size = ImGui::CalcTextSize(text) + 2 * style.FramePadding;
-                    auto available = ImGui::GetContentRegionAvail();
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + available.x - button_size.x);
-                    if (ImGui::Button(text)) {
-                        auto themeJsonPath = THEMIIFY_INSTALLED_THEMES / (installedThemeData.themeIDPath + ".json");
-                        DeleteThemePopup::show(installedThemeData, themeJsonPath);
-                    }
-                }
-
+            case State::ready_local:
+                show_local();
                 break;
-            }
 
             default:
                 ;

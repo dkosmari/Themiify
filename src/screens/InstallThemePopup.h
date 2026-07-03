@@ -1,6 +1,6 @@
 /*
  * Themiify - A theme manager for the Nintendo Wii U
- * Copyright (C) 2026 Fangal-Airbag  
+ * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
  * Copyright (C) 2026  Daniel K. O. <dkosmari>
  *
@@ -13,7 +13,10 @@
 #include "../installer.h"
 
 namespace InstallThemePopup {
-    void show(const std::filesystem::path &uthemePath, Installer::theme_data themeData, bool confirmationCompleted, bool setCurrent);
+    void open(const std::filesystem::path &uthemePath,
+              const Installer::UThemeMetadata &themeData,
+              bool confirmationCompleted,
+              bool setCurrent);
 
     void process_ui();
 }

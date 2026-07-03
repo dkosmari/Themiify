@@ -7,10 +7,12 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#include <iostream>
-#include <unordered_map>
-#include <cctype>
 #include <algorithm>
+#include <atomic>
+#include <iostream>
+#include <optional>
+#include <ranges>
+#include <thread>
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
@@ -19,12 +21,16 @@
 #include <imgui_raii.h>
 
 #include "ManageThemesScreen.h"
+#include "HomeScreen.h"
 #include "InstallThemePopup.h"
 #include "ThemeDetailsPopup.h"
 #include "DeleteThemePopup.h"
 #include "../installer.h"
 #include "../utils.h"
 #include "../IconsFontAwesome4.h"
+#include "../ImageLoader.h"
+#include "../tracer.hpp"
+#include "../thread_safe.hpp"
 
 // Define this to help seeing the padding and spacing values for windows.
 // #define DEBUG_BG_COLOR
@@ -34,6 +40,9 @@ using std::endl;
 using namespace std::literals;
 
 namespace ManageThemesScreen {
+
+    using Installer::InstalledThemeMetadata;
+
     enum class Tab {
         manage_installed,
         install_local,
@@ -41,48 +50,33 @@ namespace ManageThemesScreen {
 
     Tab current_tab = Tab::manage_installed;
 
-    std::vector<std::filesystem::path> local_themes;
-    std::vector<std::filesystem::path> json_files;
+    std::vector<std::filesystem::path> local_uthemes;
+    bool local_uthemes_need_refresh = true;
 
-    std::vector<Installer::installed_theme_data> installed_themes;
+    std::jthread installed_themes_scanner;
+    thread_safe<std::vector<InstalledThemeMetadata>> safe_installed_themes;
 
-    bool local_themes_refresh = true;
-    bool is_current_theme = false;
+    enum class InstalledThemesScanState {
+        idle,
+        requested,
+        scanning,
+    };
+    std::atomic<InstalledThemesScanState> installed_themes_scan_state{
+        InstalledThemesScanState::requested
+    };
 
     SDL_Renderer *manage_renderer;
 
-    SDL_Texture *thumbnail;
-    std::unordered_map<std::string, SDL_Texture*> thumbnail_cache;
-    SDL_Texture* placeholder_thumbnail = nullptr;
+    std::filesystem::path thumbnail_path;
 
     std::string search;
-    std::string current_theme;
 
-    SDL_Texture *getThumbnail(const std::filesystem::path& path) {
-        std::string key = path.string();
+    std::string current_theme_name;
+    bool current_theme_need_refresh = true;
 
-        auto it = thumbnail_cache.find(key);
-        if (it != thumbnail_cache.end())
-            return it->second;
-
-        SDL_Texture* tex = IMG_LoadTexture(manage_renderer, key.c_str());
-
-        if (!tex)
-            return placeholder_thumbnail;
-
-        thumbnail_cache[key] = tex;
-        return tex;
-    }
-
-    std::string as_lower_case(std::string s) {
-        for (char &c : s)
-            c = std::tolower(static_cast<unsigned char>(c));
-        return s;
-    }
-
-    int similarity_score(const std::string& haystack_, const std::string& needle_) {
-        std::string haystack = as_lower_case(haystack_);
-        std::string needle = as_lower_case(needle_);
+    int similarity_score(std::string haystack, std::string needle) {
+        haystack = as_lower_case(haystack);
+        needle = as_lower_case(needle);
 
         if (needle.empty())
             return 0;
@@ -111,364 +105,375 @@ namespace ManageThemesScreen {
         return score;
     }
 
-    void scan_local_themes() {
-        local_themes.clear();
+    void scan_local_uthemes() {
+        local_uthemes.clear();
 
         for (auto& entry : std::filesystem::directory_iterator(THEMES_ROOT)) {
             if (entry.is_regular_file() && entry.path().extension() == ".utheme") {
-                local_themes.push_back(entry.path());
+                local_uthemes.push_back(entry.path());
             }
         }
+        std::ranges::sort(local_uthemes, {}, as_lower_case);
     }
 
     void scan_installed_themes() {
-        json_files.clear();
-        installed_themes.clear();
-
-        for (auto& entry : std::filesystem::directory_iterator(THEMIIFY_INSTALLED_THEMES)) {
-            if (!entry.is_regular_file() || entry.path().extension() != ".json")
-                continue;
-
-            Installer::installed_theme_data data;
-            Installer::GetInstalledThemeMetadata(entry.path(), &data);
-
-            if (!exists(data.installedThemePath)) {
-                DeletePath(entry.path());
-                continue;
+        installed_themes_scan_state = InstalledThemesScanState::scanning;
+        installed_themes_scanner = std::jthread{
+            [](std::stop_token stopper)
+            {
+                auto themes = Installer::GetInstalledThemes(stopper);
+                if (!stopper.stop_requested()) {
+                    safe_installed_themes.store(std::move(themes));
+                    installed_themes_scan_state = InstalledThemesScanState::idle;
+                }
             }
-
-            json_files.push_back(entry.path());
-            installed_themes.push_back(data);
-        }
+        };
     }
 
     void initialize(SDL_Renderer *renderer) {
-        cout << "Hello from InstalledScreen init!" << endl;
+        TRACE_FUNC;
         create_directories(THEMES_ROOT);
         create_directories(THEMIIFY_INSTALLED_THEMES);
-
         manage_renderer = renderer;
-
-        placeholder_thumbnail = IMG_LoadTexture(manage_renderer, "fs:/vol/content/ui/theme-placeholder-icon.png");
+        installed_themes_scanner = {};
+        safe_installed_themes.lock()->clear();
     }
 
     void finalize() {
-        cout << "Hello from InstalledScreen finalize!" << endl;
+        TRACE_FUNC;
+        installed_themes_scanner = {};
+        safe_installed_themes.lock()->clear();
+    }
 
-        for (auto& [path, tex] : thumbnail_cache) {
-            if (tex)
-                SDL_DestroyTexture(tex);
+    void refresh_all() {
+        refresh_installed_themes();
+        refresh_current_theme();
+        refresh_local_uthemes();
+    }
+
+    void refresh_installed_themes() {
+        installed_themes_scan_state = InstalledThemesScanState::requested;
+    }
+
+    void refresh_current_theme() {
+        current_theme_need_refresh = true;
+    }
+
+    void refresh_local_uthemes()
+    {
+        local_uthemes_need_refresh = true;
+    }
+
+    static void text_limited(float width, const std::string& text) {
+        // WORKAROUND: prevent tooltip.
+        auto& io = ImGui::GetIO();
+        auto old_mouse_pos = io.MousePos;
+        ImGui::TextAligned(0.0f, width, text);
+        io.MousePos = old_mouse_pos;
+    }
+
+    void show_installed_theme(const Installer::InstalledThemeMetadata& theme_data,
+                              bool is_active,
+                              const ImVec2& inner_size,
+                              const ImVec2& padding) {
+        // NOTE: to create a complex button, we create a button with no text, then overlap
+        // the contents.
+        using namespace ImGui::RAII;
+
+        ID id{theme_data.themePath.string()};
+
+        const auto& style = ImGui::GetStyle();
+        const ImVec2 outer_size = inner_size + 2 * padding;
+
+        // Put everything inside a child window so we can bail out when not visibile.
+        Child container{"container", outer_size,
+                        ImGuiChildFlags_NavFlattened};
+        if (!container)
+            return;
+
+        const ImVec2 start_pos = padding;
+
+        bool clicked = false;
+        ImGui::SetCursorPos({0, 0});
+        if (ImGui::Button("##button", outer_size)) {
+            // NOTE: delay opening the popup, gotta check if the user clicked on the star.
+            clicked = true;
         }
 
-        thumbnail_cache.clear();
+        // NOTE: when hovered or activated, make text light.
+        std::optional<StyleColor> dark_text;
+        if (ImGui::IsItemHovered() || ImGui::IsItemActive()) {
+            const auto& colors = style.Colors;
+            auto dark_color = colors[ImGuiCol_WindowBg];
+            dark_text.emplace(ImGuiCol_Text, dark_color);
+        }
 
-        if (placeholder_thumbnail) {
-            SDL_DestroyTexture(placeholder_thumbnail);
-            placeholder_thumbnail = nullptr;
+        ImGui::SetCursorPos(start_pos);
+        Group grp;
+
+        if (!theme_data.previewPaths.empty()) {
+            StyleVar no_border{ImGuiStyleVar_ImageBorderSize, 0};
+            auto img = ImageLoader::get(theme_data.previewPaths.front());
+            ImVec2 img_size = {inner_size.x, inner_size.x * 9.0f / 16.0f};
+            ImGui::Image((ImTextureID)img, img_size);
+        }
+
+        // NOTE: Measure size for the active star, but don't place it yet, to not mess
+        // with the cursor position.
+        const std::string star_label = is_active ? ICON_FA_STAR : ICON_FA_STAR_O;
+        const float star_font_size = 48;
+        ImVec2 star_size;
+        {
+            Font star_font{nullptr, star_font_size};
+            star_size = ImGui::CalcTextSize(star_label);
+        }
+
+        {
+            Font font{nullptr, 24};
+            // If there's an image, make sure to limit the width, so it doesn't get
+            // covered by the star.
+            float name_width = inner_size.x;
+            if (!theme_data.previewPaths.empty())
+                name_width -= star_size.x + style.ItemSpacing.x;
+            text_limited(name_width, theme_data.uthemeMetadata.themeName);
+        }
+
+        if (theme_data.uthemeMetadata.themeAuthor) {
+            Font font{nullptr, 18};
+            float author_width = inner_size.x;
+            // If there's an image, make sure to limit the width, so it doesn't get
+            // covered by the star.
+            if (!theme_data.previewPaths.empty())
+                author_width -= star_size.x + style.ItemSpacing.x;
+            text_limited(author_width, "by " + *theme_data.uthemeMetadata.themeAuthor);
+        }
+
+        // Put active star on bottom right.
+        {
+            Font star_font{nullptr, star_font_size};
+            StyleColor star_color{ImGuiCol_Text, {1.0f, 0.9f, 0.0f, 1.0f}};
+            ImGui::SetCursorPos(inner_size - star_size);
+            ImGui::Text(star_label);
+            if (clicked && ImGui::IsItemHovered()) {
+                clicked = false; // cancel the click
+                // TODO: when shuffle is implemented, this would be a toggle.
+                Installer::SetCurrentTheme(theme_data);
+                HomeScreen::force_refresh();
+                refresh_current_theme();
+            }
+        }
+
+        if (clicked)
+            ThemeDetailsPopup::open_local(theme_data, is_active);
+    }
+
+    void show_utheme(const std::filesystem::path& utheme_path) {
+        using namespace ImGui::RAII;
+
+        Child theme_frame{utheme_path.string(),
+                          {0, 0},
+                          ImGuiChildFlags_NavFlattened |
+                          ImGuiChildFlags_AutoResizeY |
+                          ImGuiChildFlags_FrameStyle,
+                          ImGuiWindowFlags_NoSavedSettings};
+
+        if (!theme_frame)
+            return;
+
+        const auto &style = ImGui::GetStyle();
+
+        const std::string install_label = ICON_FA_COGS " Install";
+        const std::string remove_label = ICON_FA_TRASH;
+
+        auto install_size = ImGui::CalcTextSize(install_label) + 2 * style.FramePadding;
+        auto remove_size = ImGui::CalcTextSize(remove_label) + 2 * style.FramePadding;
+
+        const float text_wrap_pos =
+            ImGui::GetCursorPosX()
+            + ImGui::GetContentRegionAvail().x
+            - style.ItemSpacing.x
+            - install_size.x
+            - style.ItemSpacing.x
+            - remove_size.x;
+        {
+            TextWrapPos wrap_at{text_wrap_pos};
+            ImGui::AlignTextToFramePadding();
+            ImGui::Text(utheme_path.filename().string());
+        }
+
+        ImGui::SameLine();
+
+        ImGui::SetCursorPosX(text_wrap_pos + style.ItemSpacing.x);
+
+        if (ImGui::Button(install_label, install_size)) {
+            Installer::UThemeMetadata theme_data;
+            Installer::GetUThemeMetadata(utheme_path, theme_data);
+            InstallThemePopup::open(utheme_path, theme_data, false, true);
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button(remove_label, remove_size)) {
+            DeletePath(utheme_path);
+            refresh_local_uthemes();
         }
     }
 
-    void force_refresh() {
-        local_themes_refresh = true;
+    void show_tab_manage_installed() {
+        using namespace ImGui::RAII;
+
+        ImGui::AlignTextToFramePadding(); // align vertically with the InputText widget
+        ImGui::Text("Search installed theme:");
+
+        ImGui::SameLine();
+
+        SDL_WiiUSetSWKBDHintText("Write some search terms...");
+        SDL_WiiUSetSWKBDOKLabel("Search");
+        SDL_WiiUSetSWKBDHighlightInitialText(SDL_TRUE);
+
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        ImGui::InputTextWithHint("##local_search"s, "Search..."s, search);
+
+        // if (ImGui::IsItemDeactivatedAfterEdit()) {
+        //     cout << "Searching: " << search << endl;
+        // }
+
+        if (installed_themes_scan_state == InstalledThemesScanState::requested) {
+            scan_installed_themes();
+        }
+
+        if (current_theme_need_refresh) {
+            current_theme_name = Installer::GetCurrentThemeName();
+            current_theme_need_refresh = false;
+        }
+
+        std::vector<std::size_t> visible_indexes;
+
+        auto installed_themes = safe_installed_themes.lock();
+
+        for (std::size_t i = 0; i < installed_themes->size(); ++i) {
+            int score = similarity_score((*installed_themes)[i].uthemeMetadata.themeName,
+                                         search);
+
+            if (search.empty() || score >= 0)
+                visible_indexes.push_back(i);
+        }
+
+        if (!search.empty()) {
+            std::ranges::sort(
+                visible_indexes,
+                [&](std::size_t a, std::size_t b) {
+                    const auto& ta = (*installed_themes)[a];
+                    const auto& tb = (*installed_themes)[b];
+                    auto sa = similarity_score(ta.uthemeMetadata.themeName, search);
+                    auto sb = similarity_score(tb.uthemeMetadata.themeName, search);
+                    return sa > sb;
+                }
+            );
+        }
+
+        // To keep the search widget visible, put the search results inside
+        // another child.
+        if (Child search_results{"ThemeGrid"}) {
+
+            if (installed_themes_scan_state == InstalledThemesScanState::idle) {
+
+                const ImVec2 grid_start_pos = ImGui::GetCursorPos();
+                const ImVec2 inner_size = {320, 260};
+                const ImVec2 padding = {12, 12};
+                const ImVec2 outer_size = inner_size + 2 * padding;
+                const ImVec2 spacing = {18, 18};
+
+                for (auto [counter, index] : visible_indexes | std::views::enumerate) {
+                    auto& theme_data = (*installed_themes)[index];
+                    bool is_current_theme = current_theme_name == theme_data.themePath.filename();
+
+                    ImVec2 grid_pos = { float(counter % 3), float(counter / 3) };
+                    ImVec2 pos = grid_pos * (outer_size + spacing);
+                    ImGui::SetCursorPos(grid_start_pos + pos);
+                    show_installed_theme(theme_data,
+                                         is_current_theme,
+                                         inner_size,
+                                         padding);
+                }
+            } else {
+                ImGui::Text("Scanning installed themes...");
+            }
+        }
+    }
+
+    void show_tab_install_local() {
+        ImGui::Text("Install .utheme files from sd:/wiiu/themes here.");
+
+        ImGui::Separator();
+
+        if (local_uthemes_need_refresh) {
+            scan_local_uthemes();
+            local_uthemes_need_refresh = false;
+        }
+
+        for (const auto& utheme_path : local_uthemes)
+            show_utheme(utheme_path);
     }
 
     void process_ui() {
         using namespace ImGui::RAII;
 
-#ifdef DEBUG_BG_COLOR
-        StyleColor green_bg{ImGuiCol_ChildBg, {0.0, 0.5, 0.0, 1.0}};
-#endif
-
-        Child content{
-            "ManageThemesContent",
-            {0, 0},
-            ImGuiChildFlags_AlwaysUseWindowPadding
-        };
-
-        if (!content)
-            return;
-
-        const auto &style = ImGui::GetStyle();
-
-        float tab_width = (ImGui::GetContentRegionAvail().x - style.ItemSpacing.x) * 0.50f;
-
-        constexpr float tab_height = 60.0f;
-        // Installer::installed_theme_data theme_data;
-
-
-        if (ImGui::Selectable(
-                "Manage Installed Themes",
-                current_tab == Tab::manage_installed,
-                0,
-                {tab_width, tab_height}))
         {
-            current_tab = Tab::manage_installed;
-            force_refresh();
-        }
-
-        ImGui::SameLine();
-
-        if (ImGui::Selectable(
-                "Install Local Themes",
-                current_tab == Tab::install_local,
-                0,
-                {tab_width, tab_height}))
-        {
-            current_tab = Tab::install_local;
-            force_refresh();
-        }
-
-        ImGui::Separator();
-        ImGui::Spacing();
-
+            // NOTE: use a scope to contain all the temporary style changes, so they don't
+            // leak into the popups at the bottom.
 #ifdef DEBUG_BG_COLOR
-        StyleColor brown_bg{ImGuiCol_ChildBg, {0.3, 0.3, 0.0, 1.0}};
+            StyleColor green_bg{ImGuiCol_ChildBg, {0.0, 0.5, 0.0, 1.0}};
 #endif
-        if (Child contents{"contents", {0, 0}, ImGuiChildFlags_AlwaysUseWindowPadding}) {
+            const auto &style = ImGui::GetStyle();
+            // Remove horizontal padding.
+            StyleVar no_hori_padding{ImGuiStyleVar_WindowPadding, {0, style.WindowPadding.y}};
+            if (Child manage_content{"ManageThemesContent",
+                                     {0, 0},
+                                     ImGuiChildFlags_NavFlattened |
+                                     ImGuiChildFlags_AlwaysUseWindowPadding}) {
 
-            switch (current_tab) {
-                case Tab::manage_installed: {
-                    ImGui::AlignTextToFramePadding();
-                    ImGui::Text("Search installed theme:");
+                float tab_width = (ImGui::GetContentRegionAvail().x - style.ItemSpacing.x) * 0.50f;
+                const float tab_height = ImGui::GetFrameHeight();
 
-                    ImGui::SameLine();
 
-                    SDL_WiiUSetSWKBDKeyboardMode(SDL_WIIU_SWKBD_KEYBOARD_MODE_FULL);
-                    SDL_WiiUSetSWKBDHintText("Iname of a theme to search for it...");
-                    SDL_WiiUSetSWKBDOKLabel("Search");
-                    SDL_WiiUSetSWKBDShowWordSuggestions(SDL_TRUE);
-                    SDL_WiiUSetSWKBDHighlightInitialText(SDL_TRUE);
-
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-                    ImGui::InputTextWithHint("##local_search"s, "Search..."s, search);
-
-                    if (ImGui::IsItemDeactivatedAfterEdit()) {
-                        cout << "Searching: " << search << endl;
-                    }
-
-                    ImGui::Spacing();
-
-                    if (local_themes_refresh) {
-                        scan_installed_themes();
-                        current_theme = Installer::GetCurrentTheme();
-
-                        auto current_it = std::find_if(
-                            installed_themes.begin(),
-                            installed_themes.end(),
-                            [&](const auto& data) {
-                                return sanitize_element(data.themeName + " (" + data.themeIDPath + ")") == current_theme;
-                            }
-                        );
-
-                        if (current_it != installed_themes.end()) {
-                            auto index = std::distance(installed_themes.begin(), current_it);
-
-                            std::rotate(installed_themes.begin(), current_it, current_it + 1);
-                            std::rotate(json_files.begin(), json_files.begin() + index, json_files.begin() + index + 1);
-                        }
-
-                        local_themes_refresh = false;
-                    }
-
-                    std::vector<std::size_t> visible_indexes;
-
-                    for (std::size_t i = 0; i < installed_themes.size(); ++i) {
-                        int score = similarity_score(installed_themes[i].themeName, search);
-
-                        if (search.empty() || score >= 0)
-                            visible_indexes.push_back(i);
-                    }
-
-                    if (!search.empty()) {
-                        std::ranges::sort(
-                            visible_indexes,
-                            [&](std::size_t a, std::size_t b) {
-                                return similarity_score(installed_themes[a].themeName, search)
-                                    > similarity_score(installed_themes[b].themeName, search);
-                            }
-                        );
-                    }
-
-                    // To keep the search widget visible, put the search results inside another child.
-                    if (Child search_results{"search_results"}) {
-
-                        for (std::size_t index : visible_indexes) {
-                            auto& theme_data = installed_themes[index];
-                            auto& current_json_path = json_files[index];
-
-                            bool is_current_theme =
-                                sanitize_element(theme_data.themeName + " (" + theme_data.themeIDPath + ")") == current_theme;
-
-                            Child theme_frame{
-                                theme_data.themeIDPath,
-                                {0, 320},
-                                ImGuiChildFlags_NavFlattened |
-                                ImGuiChildFlags_FrameStyle,
-                                ImGuiWindowFlags_NoSavedSettings
-                            };
-
-                            if (!theme_frame)
-                                continue;
-
-                            if (is_current_theme) {
-                                auto* draw_list = ImGui::GetWindowDrawList();
-
-                                ImVec2 min = ImGui::GetWindowPos();
-                                ImVec2 max = {
-                                    min.x + ImGui::GetWindowSize().x,
-                                    min.y + ImGui::GetWindowSize().y
-                                };
-
-                                constexpr float rounding = 16.0f;
-
-                                draw_list->AddRect(
-                                    min,
-                                    max,
-                                    IM_COL32(50, 220, 50, 255),
-                                    rounding,
-                                    ImDrawFlags_RoundCornersAll,
-                                    6.0f
-                                );
-
-                                constexpr float radius = 18.0f;
-
-                                ImVec2 badge_center{
-                                    max.x - radius - 12.0f,
-                                    min.y + radius + 12.0f
-                                };
-
-                                draw_list->AddCircleFilled(
-                                    badge_center,
-                                    radius,
-                                    IM_COL32(50, 220, 50, 255)
-                                );
-
-                                draw_list->AddCircle(
-                                    badge_center,
-                                    radius,
-                                    IM_COL32(255, 255, 255, 255),
-                                    0,
-                                    2.0f
-                                );
-
-                                const char* star = ICON_FA_STAR;
-                                ImVec2 star_size = ImGui::CalcTextSize(star);
-
-                                draw_list->AddText(
-                                    {
-                                        badge_center.x - star_size.x * 0.5f,
-                                        badge_center.y - star_size.y * 0.5f
-                                    },
-                                    IM_COL32(255, 255, 255, 255),
-                                    star
-                                );
-                            }
-
-                            auto thumbnailPath =
-                                THEMIIFY_THUMBNAILS / (theme_data.themeIDPath + ".webp");
-
-                            SDL_Texture* thumbnail = getThumbnail(thumbnailPath);
-
-                            ImGui::Image((ImTextureID)thumbnail, {426, 240});
-
-                            ImGui::SameLine();
-
-                            {
-                                Group right_group;
-
-                                ImGui::TextWrapped("%s", theme_data.themeName.c_str());
-                                ImGui::TextWrapped("by: %s", theme_data.themeAuthor.c_str());
-
-                                if (ImGui::Button(ICON_FA_INFO_CIRCLE " Details")) {
-                                    ThemeDetailsPopup::show_local(theme_data, thumbnail, is_current_theme);
-                                }
-
-                                ImGui::SameLine();
-
-                                {
-                                    Disabled disable_when{is_current_theme};
-
-                                    if (ImGui::Button(ICON_FA_STAR " Make Default")) {
-                                        Installer::SetCurrentTheme(theme_data.themeName, theme_data.themeIDPath);
-                                        force_refresh();
-                                    }
-                                }
-
-                                ImGui::Spacing();
-
-                                if (ImGui::Button(ICON_FA_TRASH " Delete")) {
-                                    DeleteThemePopup::show(theme_data, current_json_path);
-                                }
-                            }
-                        }
-                    }
-
-                    break;
+                if (ImGui::Selectable("Manage Installed Themes",
+                                      current_tab == Tab::manage_installed,
+                                      0,
+                                      {tab_width, tab_height})) {
+                    current_tab = Tab::manage_installed;
+                    refresh_installed_themes();
+                    refresh_current_theme();
                 }
-                case Tab::install_local:
-                    ImGui::Text("Install .utheme files from sd:/wiiu/themes here.");
 
-                    ImGui::Spacing();
+                ImGui::SameLine();
 
-                    if (local_themes_refresh) {
-                        scan_local_themes();
-                        local_themes_refresh = false;
+                if (ImGui::Selectable("Install Local Themes",
+                                      current_tab == Tab::install_local,
+                                      0,
+                                      {tab_width, tab_height})) {
+                    current_tab = Tab::install_local;
+                    refresh_local_uthemes();
+                }
+
+                ImGui::Separator();
+
+#ifdef DEBUG_BG_COLOR
+                StyleColor brown_bg{ImGuiCol_ChildBg, {0.3, 0.3, 0.0, 1.0}};
+#endif
+                if (Child tab_contents{"tab_contents",
+                                       {0, 0},
+                                       ImGuiChildFlags_NavFlattened}) {
+
+                    switch (current_tab) {
+                        case Tab::manage_installed:
+                            show_tab_manage_installed();
+                            break;
+                        case Tab::install_local:
+                            show_tab_install_local();
+                            break;
                     }
-
-                    for (const auto& utheme_path : local_themes) {
-                        std::string id = utheme_path.string();
-
-                        Child theme_frame{
-                            id.c_str(),
-                            {0, 80},
-                            ImGuiChildFlags_NavFlattened |
-                            ImGuiChildFlags_FrameStyle,
-                            ImGuiWindowFlags_NoSavedSettings |
-                            ImGuiWindowFlags_NoScrollbar |
-                            ImGuiWindowFlags_NoScrollWithMouse
-                        };
-
-                        if (!theme_frame)
-                            continue;
-
-                        ImGui::TextWrapped(
-                            "%s",
-                            utheme_path.filename().string().c_str()
-                        );
-
-                        ImGui::SameLine();
-
-                        ImVec2 install_button_size{150.0f, 50.0f};
-                        ImVec2 trash_button_size{50.0f, 50.0f};
-
-                        float spacing = style.ItemSpacing.x;
-
-                        float total_width =
-                            install_button_size.x +
-                            spacing +
-                            trash_button_size.x;
-
-                        float start_x =
-                            ImGui::GetWindowWidth()
-                            - total_width
-                            - style.WindowPadding.x;
-
-                        ImGui::SetCursorPosX(start_x);
-
-                        if (ImGui::Button(ICON_FA_DOWNLOAD " Install", install_button_size)) {
-                            Installer::theme_data theme_data;
-                            Installer::GetThemeMetadata(utheme_path, &theme_data);
-                            InstallThemePopup::show(utheme_path, theme_data, false, true);
-                        }
-
-                        ImGui::SameLine();
-
-                        if (ImGui::Button(ICON_FA_TRASH, trash_button_size)) {
-                            DeletePath(utheme_path);
-                            force_refresh();
-                        }
-                    }
-                    break;
+                }
             }
         }
 

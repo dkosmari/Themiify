@@ -105,7 +105,7 @@ namespace SettingsScreen {
         bootIntegrityCheckPending = false;
     }
 
-    void initialize(SDL_Renderer *renderer) {
+    void initialize(SDL_Renderer * /*renderer*/) {
         cout << "Hello from SettingsScreen init!" << endl;
 
         load_settings();

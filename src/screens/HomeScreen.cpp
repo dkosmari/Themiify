@@ -13,11 +13,12 @@
 #include "../NavBar.h"
 #include "../installer.h"
 #include "../IconsFontAwesome4.h"
+#include "../ImageLoader.h"
 #include "../utils.h"
 
 #include <iostream>
-#include <unordered_map>
 #include <filesystem>
+#include <optional>
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
@@ -35,42 +36,19 @@ using std::endl;
 // #define DEBUG_BG_COLOR
 
 namespace HomeScreen {
+    using Installer::InstalledThemeMetadata;
+
     SDL_Renderer *home_renderer = nullptr;
 
     SDL_Texture *themiify_logo = nullptr;
 
-    std::string current_theme_str;
-    std::string current_theme_id_path;
-    std::string current_theme_json_path;
-    std::string current_theme_thumbnail_path;
-
-    Installer::installed_theme_data current_theme_data;
-    SDL_Texture *current_theme_thumbnail = nullptr;
+    std::optional<InstalledThemeMetadata> current_theme_data;
 
     bool current_theme_refresh = true;
 
     bool isFirstBoot = true;
     bool styleMiiUExists = true;
     bool queueStyleMiiUPrompt = false;
-
-    std::unordered_map<std::string, SDL_Texture*> thumbnail_cache;
-    SDL_Texture* placeholder_thumbnail = nullptr;
-
-    SDL_Texture *getThumbnail(const std::filesystem::path& path) {
-        std::string key = path.string();
-
-        auto it = thumbnail_cache.find(key);
-        if (it != thumbnail_cache.end())
-            return it->second;
-
-        SDL_Texture* tex = IMG_LoadTexture(home_renderer, key.c_str());
-
-        if (!tex)
-            return placeholder_thumbnail;
-
-        thumbnail_cache[key] = tex;
-        return tex;
-    }
 
     std::string get_theme_id(const std::string& str) {
         auto open = str.rfind('(');
@@ -85,25 +63,7 @@ namespace HomeScreen {
     }
 
     void refresh_current_theme() {
-        current_theme_str = Installer::GetCurrentTheme();
-        current_theme_id_path = get_theme_id(current_theme_str);
-
-        current_theme_json_path =
-            THEMIIFY_INSTALLED_THEMES / (current_theme_id_path + ".json");
-
-        current_theme_thumbnail_path =
-            THEMIIFY_THUMBNAILS / (current_theme_id_path + ".webp");
-
-        int res = Installer::GetInstalledThemeMetadata(
-            current_theme_json_path,
-            &current_theme_data
-        );
-
-        if (res == 1)
-            current_theme_thumbnail = getThumbnail(current_theme_thumbnail_path);
-        else
-            current_theme_data.themeIDPath = "";
-
+        current_theme_data = Installer::GetCurrentTheme();
         current_theme_refresh = false;
     }
 
@@ -121,7 +81,7 @@ namespace HomeScreen {
             return false;
         }
 
-        if (std::filesystem::exists(std::string(environmentPathBuffer) + "/plugins/stylemiiu.wps"))
+        if (exists(std::filesystem::path{environmentPathBuffer} / "plugins/stylemiiu.wps"))
             return true;
 
         return false;
@@ -133,7 +93,6 @@ namespace HomeScreen {
         home_renderer = renderer;
 
         themiify_logo = IMG_LoadTexture(renderer, "fs:/vol/content/ui/themiify-logo.png");
-        placeholder_thumbnail = IMG_LoadTexture(renderer, "fs:/vol/content/ui/theme-placeholder-icon.png");
 
         current_theme_refresh = true;
 
@@ -148,18 +107,6 @@ namespace HomeScreen {
 
     void finalize() {
         cout << "Hello from HomeScreen finalize!" << endl;
-
-        for (auto& [path, tex] : thumbnail_cache) {
-            if (tex)
-                SDL_DestroyTexture(tex);
-        }
-
-        thumbnail_cache.clear();
-
-        if (placeholder_thumbnail) {
-            SDL_DestroyTexture(placeholder_thumbnail);
-            placeholder_thumbnail = nullptr;
-        }
 
         if (themiify_logo) {
             SDL_DestroyTexture(themiify_logo);
@@ -188,14 +135,13 @@ namespace HomeScreen {
             ImGui::SameLine();
 
             {
-                Font font_guard{nullptr, 25};
+                Font font{nullptr, 25};
                 ImGui::Text("v%s", THEMIIFY_VERSION);
             }
         }
 
         {
-            Font font_guard{nullptr, 55};
-
+            Font font{nullptr, 55};
             // Cute lil thing cause why not?
             isFirstBoot ? ImGui::Text("Welcome!") : ImGui::Text("Welcome back!");
         }
@@ -216,22 +162,18 @@ namespace HomeScreen {
 #ifdef DEBUG_BG_COLOR
         StyleColor brown_bg{ImGuiCol_ChildBg, {0.3, 0.3, 0.0, 1.0}};
 #endif
-        Child scrollable_content{"scrollable_content", {0, 0},
-                                 ImGuiChildFlags_AlwaysUseWindowPadding};
+        Child scrollable_content{"scrollable_content"};
         if (!scrollable_content)
             return;
 
-
-        ImGui::Spacing();
-
         {
-            Font font_guard{nullptr, 35};
+            Font font{nullptr, 35};
             ImGui::Text("Your current theme:");
         }
 
         ImGui::Spacing();
 
-        if (current_theme_data.themeIDPath.empty()) {
+        if (!current_theme_data) {
             ImGui::Text("No current theme found.");
             ImGui::Spacing();
         }
@@ -240,24 +182,28 @@ namespace HomeScreen {
 
             {
                 Child theme_frame{
-                    current_theme_data.themeIDPath,
+                    "CurrentTheme",
                     {800, 300},
                     ImGuiChildFlags_NavFlattened |
                     ImGuiChildFlags_FrameStyle,
                     ImGuiWindowFlags_NoSavedSettings
                 };
 
-                ImGui::Image((ImTextureID)current_theme_thumbnail, {426, 240});
-
-                ImGui::SameLine();
+                if (!current_theme_data->previewPaths.empty()) {
+                    auto img = ImageLoader::get(current_theme_data->previewPaths.front());
+                    ImGui::Image((ImTextureID)img, {426, 240});
+                    ImGui::SameLine();
+                }
 
                 {
                     Group right_group;
 
                     {
                         Font font_guard{nullptr, 30};
-                        ImGui::TextWrapped(current_theme_data.themeName);
-                        ImGui::TextWrapped("by: %s", current_theme_data.themeAuthor.c_str());
+                        ImGui::TextWrapped(current_theme_data->uthemeMetadata.themeName);
+                        if (current_theme_data->uthemeMetadata.themeAuthor)
+                            ImGui::TextWrapped("by: " +
+                                               *current_theme_data->uthemeMetadata.themeAuthor);
                     }
                 }
             }
@@ -281,7 +227,6 @@ namespace HomeScreen {
                 NavBar::set_current_tab(NavBar::Tab::manage_themes);
         }
 
-        ImGui::Spacing();
         ImGui::Separator();
 
         {
