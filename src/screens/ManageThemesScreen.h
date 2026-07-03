@@ -1,6 +1,6 @@
 /*
  * Themiify - A theme manager for the Nintendo Wii U
- * Copyright (C) 2026 Fangal-Airbag  
+ * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
  * Copyright (C) 2026  Daniel K. O. <dkosmari>
  *
@@ -16,7 +16,13 @@ namespace ManageThemesScreen {
 
     void finalize();
 
-    void force_refresh();
+    void refresh_all();
+
+    void refresh_installed_themes();
+
+    void refresh_current_theme();
+
+    void refresh_local_uthemes();
 
     void process_ui();
 }

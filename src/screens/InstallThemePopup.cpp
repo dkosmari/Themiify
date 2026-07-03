@@ -300,7 +300,7 @@ namespace InstallThemePopup {
                     DeletePath(utheme_path);
                     ImGui::CloseCurrentPopup();
                     state = State::hidden;
-                    ManageThemesScreen::force_refresh();
+                    ManageThemesScreen::refresh_all();
                 }
                 ImGui::SetItemDefaultFocus();
 
@@ -309,7 +309,7 @@ namespace InstallThemePopup {
                 if (ImGui::Button("Keep", button_size)) {
                     ImGui::CloseCurrentPopup();
                     state = State::hidden;
-                    ManageThemesScreen::force_refresh();
+                    ManageThemesScreen::refresh_all();
                 }
 
                 break;

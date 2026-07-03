@@ -64,11 +64,6 @@ namespace Installer {
         return ss.str();
     }
 
-    // static std::string GetString(const glz::generic& obj, const std::string& key)
-    // {
-    //     return obj.at(key).get<std::string>();
-    // }
-
     std::filesystem::path GetMenuContentPath() {
         uint64_t menuTitleID = _SYSGetSystemApplicationTitleId(SYSTEM_APP_ID_WII_U_MENU);
 
@@ -282,16 +277,20 @@ namespace Installer {
         }
     }
 
-    std::vector<InstalledThemeMetadata> GetInstalledThemes() {
+    std::vector<InstalledThemeMetadata> GetInstalledThemes(std::stop_token& stopper) {
         std::vector<InstalledThemeMetadata> result;
         try {
             for (auto& entry : std::filesystem::directory_iterator{THEMES_ROOT}) {
+                if (stopper.stop_requested())
+                    break;
                 if (!entry.is_directory())
                     continue;
                 InstalledThemeMetadata meta;
                 if (GetInstalledThemeMetadata(entry.path(), meta))
                     result.push_back(std::move(meta));
             }
+            if (stopper.stop_requested())
+                return result;
             // Now sort them by path.
             std::ranges::sort(result,
                               {},

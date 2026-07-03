@@ -11,8 +11,6 @@
 
 #include "NavBar.h"
 #include "App.h"
-#include "screens/ManageThemesScreen.h"
-#include "screens/HomeScreen.h"
 #include "utils.h"
 
 #include <SDL2/SDL_image.h>
@@ -134,7 +132,6 @@ namespace NavBar {
                 // add the sound effect and rumble when clicked
                 if (ImGui::ImageButton("home_button_normal", home_button_normal_tex, button_size)) {
                     current_tab = Tab::home;
-                    HomeScreen::force_refresh();
                 }
             }
 
@@ -153,7 +150,6 @@ namespace NavBar {
             else {
                 if (ImGui::ImageButton("themezer_button_normal", themezer_button_normal_tex, button_size)) {
                     current_tab = Tab::themezer;
-                    ManageThemesScreen::force_refresh();
                 }
             }
 

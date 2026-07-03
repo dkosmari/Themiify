@@ -1,3 +1,4 @@
+#include <cctype>
 #include <cstdio>
 #include <iostream>
 #include <ranges>

@@ -99,7 +99,7 @@ namespace DeleteThemePopup {
 
         if (ImGui::Button(delete_label, button_size)) {
             Installer::DeleteTheme(installedThemeData);
-            ManageThemesScreen::force_refresh();
+            ManageThemesScreen::refresh_installed_themes();
             ImGui::CloseCurrentPopup();
             state = State::hidden;
         }

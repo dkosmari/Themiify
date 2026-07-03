@@ -38,7 +38,7 @@ namespace Installer {
     bool GetInstalledThemeMetadata(const std::filesystem::path &installedThemePath,
                                    InstalledThemeMetadata &imeta);
 
-    std::vector<InstalledThemeMetadata> GetInstalledThemes();
+    std::vector<InstalledThemeMetadata> GetInstalledThemes(std::stop_token& stopper);
 
     using progress_function_sig = void (const std::string &msg);
     using progress_function_t = std::function<progress_function_sig>;

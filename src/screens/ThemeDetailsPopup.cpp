@@ -172,8 +172,8 @@ namespace ThemeDetailsPopup {
                     if (ImGui::Button(ICON_FA_STAR " Apply Theme", {-1, 0})) {
                         Installer::SetCurrentTheme(installedThemeData);
                         ImGui::CloseCurrentPopup();
-                        ManageThemesScreen::force_refresh();
                         HomeScreen::force_refresh();
+                        ManageThemesScreen::refresh_current_theme();
                     }
                     ImGui::SetItemDefaultFocus();
                 }
