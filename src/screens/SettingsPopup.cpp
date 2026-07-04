@@ -10,16 +10,18 @@
 #include "SettingsPopup.h"
 #include "../utils.h"
 #include "../App.h"
+#include "../IconsFontAwesome4.h"
 
 #include <coreinit/systeminfo.h>
 #include <sysapp/title.h>
 
-#include <string>
-#include <iostream>
-#include <fstream>
-#include <thread>
 #include <atomic>
+#include <cmath>
+#include <fstream>
+#include <iostream>
 #include <mutex>
+#include <string>
+#include <thread>
 
 #include <imgui.h>
 #include <imgui_raii.h>
@@ -237,7 +239,7 @@ namespace SettingsPopup {
         return crc;
     }
 
-    void show(OpenState openState) {
+    void open(OpenState openState) {
         menu_content_path = GetMenuContentPath();
 
         full_all_message_paths.clear();
@@ -317,6 +319,408 @@ namespace SettingsPopup {
 
     }
 
+    // Common code to show a single centered close button.
+    void show_centered_close_button() {
+        const auto &style = ImGui::GetStyle();
+        const std::string close_label = ICON_FA_TIMES " Close";
+        const ImVec2 close_size = ImGui::CalcTextSize(close_label) + 2 * style.FramePadding;
+        const ImVec2 available = ImGui::GetContentRegionAvail();
+        const float start_x = (available.x + close_size.x) / 2;
+        if (start_x > 0)
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
+        if (ImGui::Button(close_label, close_size)) {
+            ImGui::CloseCurrentPopup();
+            state = State::hidden;
+        }
+    }
+
+    void show_stylemiiu_error() {
+        using namespace ImGui::RAII;
+        {
+            Font title_font{nullptr, 35};
+            ImGui::Text("StyleMiiU Not Found!");
+        }
+
+        ImGui::Text("The StyleMiiU aroma plugin could not be found!\n"
+                    "\n"
+                    "For your installed themes to work in the Wii U Menu you will need to install\n"
+                    "this plugin from either the Homebrew App Store or at:\n"
+                    "\n"
+                    "github.com/Themiify-hb/StyleMiiU-Plugin/releases/latest");
+
+        const auto &style = ImGui::GetStyle();
+
+        const std::string quit_label = ICON_FA_SIGN_OUT " Quit Themiify";
+        ImVec2 quit_size = ImGui::CalcTextSize(quit_label) + 2 * style.FramePadding;
+
+        ImVec2 available = ImGui::GetContentRegionAvail();
+        float start_x = (available.x - quit_size.x) / 2;;
+
+        if (start_x > 0)
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
+
+        if (ImGui::Button(quit_label, quit_size))
+            App::quit();
+    }
+
+    void show_integrity_confirmation() {
+        using namespace ImGui::RAII;
+
+        {
+            Font title_font{nullptr, 35};
+            ImGui::Text("Check Menu Integrity Confirmation");
+        }
+
+        ImGui::Text("Would you like to check the integrity of your Wii U Menu's\n"
+                    "files on your NAND to verify whether they have been modified?\n"
+                    "\n"
+                    "If your files have been modified, Themiify will always fail to install themes\n"
+                    "until you either restore clean files to your NAND, or place clean files\n"
+                    "in sd:/themiify/cache.\n"
+                    "\n"
+                    "Please check the Theme Café Docs for more info.");
+
+        const auto &style = ImGui::GetStyle();
+
+        const std::string check_label = ICON_FA_SHIELD " Check Integrity";
+        ImVec2 check_size = ImGui::CalcTextSize(check_label) + 2 * style.FramePadding;
+
+        const std::string close_label = ICON_FA_TIMES " Close";
+        ImVec2 close_size = ImGui::CalcTextSize(close_label) + 2 * style.FramePadding;
+
+        ImVec2 button_size = {std::fmax(check_size.x, close_size.x),
+                              std::fmax(check_size.y, close_size.y)};
+
+        ImVec2 available = ImGui::GetContentRegionAvail();
+
+        float total_width = 2 * button_size.x + style.ItemSpacing.x;
+
+        float start_x = (available.x - total_width) / 2;
+
+        if (start_x > 0)
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
+
+        if (ImGui::Button(check_label, button_size)) {
+            modified_files.clear();
+
+            start_worker([] {
+                for (const auto& entry : integrity_files) {
+                    auto full_path = menu_content_path / entry.relative_path;
+
+                    if (!exists(full_path))
+                        continue;
+
+                    uint32_t crc = CalculateCRC32(full_path);
+
+                    if (crc != entry.expected_crc) {
+                        std::scoped_lock lock{worker_mutex};
+                        modified_files.push_back(entry.relative_path);
+                    }
+                }
+
+                return true;
+            });
+
+            state = State::checking_integrity;
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button(close_label, button_size)) {
+            ImGui::CloseCurrentPopup();
+            state = State::hidden;
+        }
+
+    }
+
+    void show_checking_integrity() {
+        using namespace ImGui::RAII;
+        {
+            Font title_font{nullptr, 35};
+            ImGui::Text("Checking...");
+        }
+
+        ImGui::Text("Please wait. Do not turn off your Wii U.");
+
+        if (worker_done) {
+            worker_thread = {};
+            state = worker_success
+                ? State::integrity_checked
+                : State::cache_error;
+        }
+    }
+
+    void show_integrity_checked() {
+        using namespace ImGui::RAII;
+        {
+            Font title_font{nullptr, 35};
+            ImGui::Text("Integrity Checked");
+        }
+
+        if (modified_files.empty()) {
+            ImGui::Text("All your menu files are clean and ready for use with Themiify!");
+        }
+        else {
+            ImGui::Text("The following files appear to be modified: ");
+
+            ImGui::Indent();
+            for (auto &file : modified_files) {
+                ImGui::Text(file.string());
+            }
+            ImGui::Unindent();
+
+            ImGui::Text("Please consult the Theme Cafe docs for steps to restore your original files.");
+        }
+
+        show_centered_close_button();
+    }
+
+    void show_dump_confirmation() {
+        using namespace ImGui::RAII;
+
+        {
+            Font title_font{nullptr, 35};
+            ImGui::Text("Dump Menu Files Confirmation");
+        }
+
+        ImGui::Text("Would you like to dump the most common Wii U Menu files\n"
+                    "used in theme creation to your SD Card?\n"
+                    "\n"
+                    "The files dumped are: Men.pack, Men2.pack & cafe_barista_men.bfsar\n"
+                    "\n"
+                    "Note: By installing any theme via Themiify, this will be done automatically.");
+
+        ImGui::Checkbox("Dump AllMessage.szs for all languages.\n"
+                        "Consult the Theme Café docs for more info on these files.",
+                        &dump_allmessage);
+
+        const auto &style = ImGui::GetStyle();
+
+        const std::string dump_label = ICON_FA_DOWNLOAD " Dump Files";
+        ImVec2 dump_size = ImGui::CalcTextSize(dump_label) + 2 * style.FramePadding;
+
+        const std::string close_label = ICON_FA_TIMES " Close";
+        ImVec2 close_size = ImGui::CalcTextSize(close_label) + 2 * style.FramePadding;
+
+        ImVec2 button_size = {std::fmax(dump_size.x, close_size.x),
+                              std::fmax(dump_size.y, close_size.y)};
+
+        float total_width = 2 * button_size.x + style.ItemSpacing.x;
+
+        ImVec2 available = ImGui::GetContentRegionAvail();
+
+        float start_x = (available.x - total_width) / 2;
+
+        if (start_x > 0)
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
+
+        if (ImGui::Button(dump_label, button_size)) {
+            start_worker([] {
+                bool dump_success = true;
+
+                auto dump_one = [](const std::filesystem::path& src,
+                                   const std::filesystem::path& dst) {
+                    std::ifstream file(src, std::ios::binary | std::ios::ate);
+                    CreateParentDirectories(dst);
+                    CreateCacheFile(file, dst);
+                    return exists(dst) && file_size(dst) > 0;
+                };
+
+                dump_success &= dump_one(
+                    menu_content_path / MEN_PATH,
+                    THEMIIFY_ROOT / "cache" / MEN_PATH
+                );
+
+                dump_success &= dump_one(
+                    menu_content_path / MEN2_PATH,
+                    THEMIIFY_ROOT / "cache" / MEN2_PATH
+                );
+
+                dump_success &= dump_one(
+                    menu_content_path / CAFE_BARISTA_MEN_PATH,
+                    THEMIIFY_ROOT / "cache" / CAFE_BARISTA_MEN_PATH
+                );
+
+                if (dump_allmessage) {
+                    for (size_t i = 0; i < full_all_message_paths.size(); ++i) {
+                        dump_success &= dump_one(
+                            full_all_message_paths.at(i),
+                            cache_all_message_paths.at(i)
+                        );
+                    }
+                }
+
+                return dump_success;
+            });
+
+            state = State::dumping;
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button(close_label, button_size)) {
+            ImGui::CloseCurrentPopup();
+            state = State::hidden;
+        }
+    }
+
+    void show_dumping() {
+        using namespace ImGui::RAII;
+        Font title_font{nullptr, 35};
+        ImGui::Text("Dumping...");
+
+        ImGui::Text("Please wait. Do not turn off your Wii U.");
+
+        if (worker_done) {
+            worker_thread = {};
+            state = worker_success
+                ? State::dump_completed
+                : State::dump_error;
+        }
+    }
+
+    void show_dump_completed() {
+        using namespace ImGui::RAII;
+        {
+            Font title_font{nullptr, 35};
+            ImGui::Text("Dump Completed");
+        }
+
+        ImGui::Text("The dump has been sucessfully completed\n"
+                    "\n"
+                    "You can find your dumped files at:\n"
+                    "sd:/themiify/cache");
+
+        show_centered_close_button();
+    }
+
+    void show_dump_error() {
+        using namespace ImGui::RAII;
+
+        {
+            Font title_font{nullptr, 35};
+            ImGui::Text("Dump Error");
+        }
+
+        ImGui::Text("One or more files failed to dump correctly.");
+
+        show_centered_close_button();
+    }
+
+    void show_cache_confirmation() {
+        using namespace ImGui::RAII;
+
+        {
+            Font title_font{nullptr, 35};
+            ImGui::Text("Clear Cache Confirmation");
+        }
+
+        ImGui::Text("Would you like to delete your Themiify cache located at:\n"
+                    "sd:/themiify/cache ?\n"
+                    "\n"
+                    "Doing so will delete all dumped Wii U Menu files");
+
+        ImGui::Checkbox("Delete theme thumbnails as well?", &delete_thumbnails);
+
+        const auto &style = ImGui::GetStyle();
+
+        const std::string clear_label = ICON_FA_TRASH " Clear Cache";
+        ImVec2 clear_size = ImGui::CalcTextSize(clear_label) + 2 * style.FramePadding;
+
+        const std::string close_label = ICON_FA_TIMES " Close";
+        ImVec2 close_size = ImGui::CalcTextSize(close_label) + 2 * style.FramePadding;
+
+        ImVec2 button_size = {std::fmax(clear_size.x, close_size.x),
+                              std::fmax(clear_size.y, close_size.y)};
+
+        float total_width = 2 * button_size.x + style.ItemSpacing.x;
+
+        ImVec2 available = ImGui::GetContentRegionAvail();
+
+        float start_x = (available.x - total_width) / 2;
+
+        if (start_x > 0)
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
+
+        if (ImGui::Button(clear_label, button_size)) {
+            start_worker([] {
+                if (delete_thumbnails)
+                    DeletePath(THEMIIFY_THUMBNAILS);
+
+                DeletePath(THEMIIFY_ROOT / "cache/Common");
+
+                for (const auto& path : all_message_szs_locations) {
+                    DeletePath(THEMIIFY_ROOT / "cache" / path);
+                }
+
+                if (delete_thumbnails && exists(THEMIIFY_THUMBNAILS))
+                    return false;
+
+                if (exists(THEMIIFY_ROOT / "cache/Common"))
+                    return false;
+
+                for (const auto& path : all_message_szs_locations) {
+                    if (exists(THEMIIFY_ROOT / "cache" / path))
+                        return false;
+                }
+
+                return true;
+            });
+
+            state = State::clearing_cache;
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button(close_label, button_size)) {
+            ImGui::CloseCurrentPopup();
+            state = State::hidden;
+        }
+    }
+
+    void show_clearing_cache() {
+        using namespace ImGui::RAII;
+        {
+            Font title_font{nullptr, 35};
+            ImGui::Text("Clearing Cache...");
+        }
+
+        ImGui::Text("Please wait.");
+
+        if (worker_done) {
+            worker_thread = {};
+            state = worker_success
+                ? State::cache_cleared
+                : State::cache_error;
+        }
+    }
+
+    void show_cache_cleared() {
+        using namespace ImGui::RAII;
+        {
+            Font title_font{nullptr, 35};
+            ImGui::Text("Cache Cleared");
+        }
+
+        ImGui::Text("The Themiify cache has been succesfully cleared.");
+
+        show_centered_close_button();
+    }
+
+    void show_cache_error()
+    {
+        using namespace ImGui::RAII;
+
+        {
+            Font title_font{nullptr, 35};
+            ImGui::Text("Error Clearing Cache");
+        }
+
+        ImGui::Text("One or more files could not be removed from the cache");
+
+        show_centered_close_button();
+    }
+
     void process_ui() {
         using namespace ImGui::RAII;
         if (state == State::hidden)
@@ -344,414 +748,57 @@ namespace SettingsPopup {
             return;
         }
 
-        const auto &style = ImGui::GetStyle();
-
         switch (state) {
-            case State::stylmiiu_error: {
-                {
-                    Font title_font{nullptr, 35};
-                    ImGui::Text("StyleMiiU Not Found!");
-                }
-
-                ImGui::Text("The StyleMiiU aroma plugin could not be found!\n"
-                            "\n"
-                            "For your installed themes to work in the Wii U Menu you will need to install\n"
-                            "this plugin from either the Homebrew App Store or at:\n"
-                            "\n"
-                            "github.com/Themiify-hb/StyleMiiU-Plugin/releases/latest");
-
-                ImVec2 button_size{250, 0};
-
-                float start_x =
-                    (ImGui::GetContentRegionAvail().x - button_size.x) * 0.5f;
-
-                if (start_x > 0.0f)
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-                if (ImGui::Button("Close Themiify", button_size)) {
-                    App::quit();
-                }
-
+            case State::stylmiiu_error:
+                show_stylemiiu_error();
                 break;
-            }
-            case State::integrity_confirmation: {
-                {
-                    Font title_font{nullptr, 35};
-                    ImGui::Text("Check Menu Integrity Confirmation");
-                }
 
-                ImGui::Text("Would you like to check the integrity of your Wii U Menu's\n"
-                            "files on your NAND to verify whether they have been modified?\n"
-                            "\n"
-                            "If your files have been modified, Themiify will always fail to install themes\n"
-                            "until you either restore clean files to your NAND, or place clean files\n"
-                            "in sd:/themiify/cache.\n"
-                            "\n"
-                            "Please check the Theme Café Docs for more info.");
-
-                ImVec2 button_size{250, 0};
-
-                float spacing = style.ItemSpacing.x;
-                float total_width = button_size.x * 2.0f + spacing;
-
-                float start_x = (ImGui::GetContentRegionAvail().x - total_width) * 0.5f;
-
-                if (start_x > 0.0f)
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-                if (ImGui::Button("Check Integrity", button_size)) {
-                    modified_files.clear();
-
-                    start_worker([] {
-                        for (const auto& entry : integrity_files) {
-                            auto full_path = menu_content_path / entry.relative_path;
-
-                            if (!exists(full_path))
-                                continue;
-
-                            uint32_t crc = CalculateCRC32(full_path);
-
-                            if (crc != entry.expected_crc) {
-                                std::scoped_lock lock{worker_mutex};
-                                modified_files.push_back(entry.relative_path);
-                            }
-                        }
-
-                        return true;
-                    });
-
-                    state = State::checking_integrity;
-                }
-
-                ImGui::SameLine();
-
-                if (ImGui::Button("Close", button_size)) {
-                    ImGui::CloseCurrentPopup();
-                    state = State::hidden;
-                }
-
+            case State::integrity_confirmation:
+                show_integrity_confirmation();
                 break;
-            }
-            case State::checking_integrity: {
-                {
-                    Font title_font{nullptr, 35};
-                    ImGui::Text("Checking...");
-                }
 
-                ImGui::Text("Please wait. Do not turn off your Wii U.");
-
-                if (worker_done) {
-                    worker_thread = {};
-                    state = worker_success
-                        ? State::integrity_checked
-                        : State::cache_error;
-                }
-
+            case State::checking_integrity:
+                show_checking_integrity();
                 break;
-            }
-            case State::integrity_checked: {
-                {
-                    Font title_font{nullptr, 35};
-                    ImGui::Text("Integrity Checked");
-                }
 
-                if (modified_files.empty()) {
-                    ImGui::Text("All your menu files are clean and ready for use with Themiify!");
-                }
-                else {
-                    ImGui::Text("The following files appear to be modified: ");
-
-                    ImGui::Indent();
-                    for (auto &file : modified_files) {
-                        ImGui::Text("%s", file.c_str());
-                    }
-                    ImGui::Unindent();
-
-                    ImGui::Text("Please consult the Theme Cafe docs for steps to restore your original files.");
-                }
-
-                ImVec2 button_size{180, 0};
-
-                float start_x =
-                    (ImGui::GetContentRegionAvail().x - button_size.x) * 0.5f;
-
-                if (start_x > 0.0f)
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-                if (ImGui::Button("Close", button_size)) {
-                    ImGui::CloseCurrentPopup();
-                    state = State::hidden;
-                }
-
+            case State::integrity_checked:
+                show_integrity_checked();
                 break;
-            }
-            case State::dump_confirmation: {
-                {
-                    Font title_font{nullptr, 35};
-                    ImGui::Text("Dump Menu Files Confirmation");
-                }
 
-                ImGui::Text("Would you like to dump the most common Wii U Menu files\n"
-                            "used in theme creation to your SD Card?\n"
-                            "\n"
-                            "The files dumped are: Men.pack, Men2.pack & cafe_barista_men.bfsar\n"
-                            "\n"
-                            "Note: By installing any theme via Themiify, this will be done automatically.");
-
-                ImGui::Checkbox("Dump AllMessage.szs for all languages.\n"
-                                "Consult the Theme Café docs for more info on these files.",
-                                &dump_allmessage);
-
-                ImVec2 button_size{210, 0};
-
-                float spacing = style.ItemSpacing.x;
-                float total_width = button_size.x * 2.0f + spacing;
-
-                float start_x = (ImGui::GetContentRegionAvail().x - total_width) * 0.5f;
-
-                if (start_x > 0.0f)
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-                if (ImGui::Button("Dump Files", button_size)) {
-                    start_worker([] {
-                        bool dump_success = true;
-
-                        auto dump_one = [](const std::filesystem::path& src,
-                                           const std::filesystem::path& dst) {
-                            std::ifstream file(src, std::ios::binary | std::ios::ate);
-                            CreateParentDirectories(dst);
-                            CreateCacheFile(file, dst);
-                            return exists(dst) && file_size(dst) > 0;
-                        };
-
-                        dump_success &= dump_one(
-                            menu_content_path / MEN_PATH,
-                            THEMIIFY_ROOT / "cache" / MEN_PATH
-                        );
-
-                        dump_success &= dump_one(
-                            menu_content_path / MEN2_PATH,
-                            THEMIIFY_ROOT / "cache" / MEN2_PATH
-                        );
-
-                        dump_success &= dump_one(
-                            menu_content_path / CAFE_BARISTA_MEN_PATH,
-                            THEMIIFY_ROOT / "cache" / CAFE_BARISTA_MEN_PATH
-                        );
-
-                        if (dump_allmessage) {
-                            for (size_t i = 0; i < full_all_message_paths.size(); ++i) {
-                                dump_success &= dump_one(
-                                    full_all_message_paths.at(i),
-                                    cache_all_message_paths.at(i)
-                                );
-                            }
-                        }
-
-                        return dump_success;
-                    });
-
-                    state = State::dumping;
-                }
-
-                ImGui::SameLine();
-
-                if (ImGui::Button("Close", button_size)) {
-                    ImGui::CloseCurrentPopup();
-                    state = State::hidden;
-                }
-
+            case State::dump_confirmation:
+                show_dump_confirmation();
                 break;
-            }
-            case State::dumping: {
-                Font title_font{nullptr, 35};
-                ImGui::Text("Dumping...");
 
-                ImGui::Text("Please wait. Do not turn off your Wii U.");
-
-                if (worker_done) {
-                    worker_thread = {};
-                    state = worker_success
-                        ? State::dump_completed
-                        : State::dump_error;
-                }
-
+            case State::dumping:
+                show_dumping();
                 break;
-            }
-            case State::dump_completed: {
-                {
-                    Font title_font{nullptr, 35};
-                    ImGui::Text("Dump Completed");
-                }
 
-                ImGui::Text("The dump has been sucessfully completed\n"
-                            "\n"
-                            "You can find your dumped files at:\n"
-                            "sd:/themiify/cache");
-
-                ImVec2 button_size{180, 0};
-
-                float start_x =
-                    (ImGui::GetContentRegionAvail().x - button_size.x) * 0.5f;
-
-                if (start_x > 0)
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-                if (ImGui::Button("Close", button_size)) {
-                    ImGui::CloseCurrentPopup();
-                    state = State::hidden;
-                }
-
+            case State::dump_completed:
+                show_dump_completed();
                 break;
-            }
-            case State::dump_error: {
-                {
-                    Font title_font{nullptr, 35};
-                    ImGui::Text("Dump Error");
-                }
 
-                ImGui::Text("One or more files failed to dump correctly.");
-
-                ImVec2 button_size{180, 0};
-
-                float start_x =
-                    (ImGui::GetContentRegionAvail().x - button_size.x) * 0.5f;
-
-                if (start_x > 0.0f)
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-                if (ImGui::Button("Close", button_size)) {
-                    ImGui::CloseCurrentPopup();
-                    state = State::hidden;
-                }
-
+            case State::dump_error:
+                show_dump_error();
                 break;
-            }
-            case State::cache_confirmation: {
-                {
-                    Font title_font{nullptr, 35};
-                    ImGui::Text("Clear Cache Confirmation");
-                }
 
-                ImGui::Text("Would you like to delete your Themiify cache located at:\n"
-                            "sd:/themiify/cache ?\n"
-                            "\n"
-                            "Doing so will delete all dumped Wii U Menu files");
-
-                ImGui::Checkbox("Delete theme thumbnails as well?", &delete_thumbnails);
-
-                ImVec2 button_size{210, 0};
-
-                float spacing = style.ItemSpacing.x;
-                float total_width = button_size.x * 2.0f + spacing;
-
-                float start_x = (ImGui::GetContentRegionAvail().x - total_width) * 0.5f;
-
-                if (start_x > 0)
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-                if (ImGui::Button("Clear Cache", button_size)) {
-                    start_worker([] {
-                        if (delete_thumbnails)
-                            DeletePath(THEMIIFY_THUMBNAILS);
-
-                        DeletePath(THEMIIFY_ROOT / "cache/Common");
-
-                        for (const auto& path : all_message_szs_locations) {
-                            DeletePath(THEMIIFY_ROOT / "cache" / path);
-                        }
-
-                        if (delete_thumbnails && exists(THEMIIFY_THUMBNAILS))
-                            return false;
-
-                        if (exists(THEMIIFY_ROOT / "cache/Common"))
-                            return false;
-
-                        for (const auto& path : all_message_szs_locations) {
-                            if (exists(THEMIIFY_ROOT / "cache" / path))
-                                return false;
-                        }
-
-                        return true;
-                    });
-
-                    state = State::clearing_cache;
-                }
-
-                ImGui::SameLine();
-
-                if (ImGui::Button("Close", button_size)) {
-                    ImGui::CloseCurrentPopup();
-                    state = State::hidden;
-                }
-
+            case State::cache_confirmation:
+                show_cache_confirmation();
                 break;
-            }
-            case State::clearing_cache: {
-                {
-                    Font title_font{nullptr, 35};
-                    ImGui::Text("Clearing Cache...");
-                }
 
-                ImGui::Text("Please wait.");
-
-                if (worker_done) {
-                    worker_thread = {};
-                    state = worker_success
-                        ? State::cache_cleared
-                        : State::cache_error;
-                }
-
+            case State::clearing_cache:
+                show_clearing_cache();
                 break;
-            }
-            case State::cache_cleared: {
-                {
-                    Font title_font{nullptr, 35};
-                    ImGui::Text("Cache Cleared");
-                }
 
-                ImGui::Text("The Themiify cache has been succesfully cleared.");
-
-                ImVec2 button_size{180, 0};
-
-                float start_x =
-                    (ImGui::GetContentRegionAvail().x - button_size.x) * 0.5f;
-
-                if (start_x > 0.0f)
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-                if (ImGui::Button("Close", button_size)) {
-                    ImGui::CloseCurrentPopup();
-                    state = State::hidden;
-                }
-
+            case State::cache_cleared:
+                show_cache_cleared();
                 break;
-            }
-            case State::cache_error: {
-                {
-                    Font title_font{nullptr, 35};
-                    ImGui::Text("Error Clearing Cache");
-                }
 
-                ImGui::Text("One or more files could not be removed from the cache");
-
-                ImVec2 button_size{180, 0};
-
-                float start_x =
-                    (ImGui::GetContentRegionAvail().x - button_size.x) * 0.5f;
-
-                if (start_x > 0.0f)
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-                if (ImGui::Button("Close", button_size)) {
-                    ImGui::CloseCurrentPopup();
-                    state = State::hidden;
-                }
-
+            case State::cache_error:
+                show_cache_error();
                 break;
-            }
+
             default:
-                break;
+                ;
         }
     }
 }
