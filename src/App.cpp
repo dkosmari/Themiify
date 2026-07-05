@@ -15,6 +15,7 @@
 #include "DownloadManager.h"
 #include "Camera.h"
 #include "utils.h"
+#include "installer.h"
 
 #include <fstream>
 #include <iostream>
@@ -238,6 +239,8 @@ namespace App {
         Camera::initialize(renderer);
         Camera::open();
 
+        Installer::initialize();
+
         DownloadManager::initialize(user_agent);
         ImageLoader::initialize(renderer);
         NavBar::initialize(renderer);
@@ -277,6 +280,7 @@ namespace App {
 
         NavBar::finalize();
         ContentPanel::finalize();
+        Installer::finalize();
         ImageLoader::finalize();
         DownloadManager::finalize();
 

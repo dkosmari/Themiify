@@ -22,9 +22,9 @@
 #include "ManageThemesScreen.h"
 #include "ThemePreviewPopup.h"
 #include "../App.h"
-#include "../installer.h"
 #include "../DownloadManager.h"
 #include "../IconsFontAwesome4.h"
+#include "../installer.h"
 #include "../ImageLoader.h"
 #include "../NavBar.h"
 #include "../ThemezerAPI.h"
@@ -54,7 +54,6 @@ namespace ThemeDetailsPopup {
     WiiuThemeSmall smallTheme;
     Installer::InstalledThemeMetadata installedThemeData;
     const std::string popup_id = "ThemeDetailsPopup"s;
-    bool isCurrent;
 
     void open_themezer(const WiiuThemeSmall &small_theme) {
         popup_queued = true;
@@ -73,12 +72,10 @@ namespace ThemeDetailsPopup {
         state = State::waiting_themezer;
     }
 
-    void open_local(const Installer::InstalledThemeMetadata& installed_theme_data,
-                    bool is_current) {
+    void open_local(const Installer::InstalledThemeMetadata& installed_theme_data) {
         popup_queued = true;
         installedThemeData = installed_theme_data;
         state = State::ready_local;
-        isCurrent = is_current;
     }
 
     void show_label_text(const std::string& label,
@@ -167,16 +164,26 @@ namespace ThemeDetailsPopup {
                     }
                 }
 
-                {
-                    Disabled disabled_if{isCurrent};
-                    if (ImGui::Button(ICON_FA_STAR " Apply Theme", {-1, 0})) {
-                        Installer::SetCurrentTheme(installedThemeData);
+                bool is_shuffling = Installer::IsShuffling();
+                bool is_active = Installer::IsActive(installedThemeData);
+
+                if (is_shuffling) {
+                    if (ImGui::Checkbox("Enable", is_active)) {
+                        if (is_active)
+                            Installer::UnsetActive(installedThemeData);
+                        else
+                            Installer::SetActive(installedThemeData);
+                        HomeScreen::force_refresh();
+                    }
+                } else {
+                    Disabled disabled_if{is_active};
+                    if (ImGui::Button(ICON_FA_STAR " Apply", {-1, 0})) {
+                        Installer::SetActive(installedThemeData);
                         ImGui::CloseCurrentPopup();
                         HomeScreen::force_refresh();
-                        ManageThemesScreen::refresh_current_theme();
                     }
-                    ImGui::SetItemDefaultFocus();
                 }
+                ImGui::SetItemDefaultFocus();
 
                 {
                     Disabled if_no_previews{installedThemeData.previewPaths.empty()};

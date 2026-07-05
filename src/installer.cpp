@@ -20,6 +20,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <zip.h>
@@ -33,6 +34,7 @@
 
 #include "installer.h"
 #include "utils.h"
+#include "tracer.hpp"
 
 using std::cout;
 using std::cerr;
@@ -41,7 +43,7 @@ using namespace std::literals;
 
 namespace Installer {
 
-    std::unordered_map<std::string, std::string> regionLangMap = {
+    std::unordered_map<std::string, std::filesystem::path> regionLangMap = {
         {"UsEn", "UsEnglish/Message/AllMessage.szs"},
         {"UsFr", "UsFrench/Message/AllMessage.szs"},
         {"UsPt", "UsPortuguese/Message/AllMessage.szs"},
@@ -57,23 +59,125 @@ namespace Installer {
         {"JpJa", "JpJapanese/Message/AllMessage.szs"}
     };
 
-    static std::string ReadWholeFile(std::ifstream& file)
+    struct StyleMiiUCfg {
+        std::string enabledThemes = {};
+        bool mashupThemes = false;
+        bool showNotification = false;
+        bool suffleThemes = false; // NOTE the typo!
+        bool themeManagerEnabled = false;
+    };
+
+    struct StyleMiiUJson {
+        StyleMiiUCfg storageitems;
+    };
+
+    std::optional<StyleMiiUCfg> currentStyleMiiUCfg;
+
+    std::unordered_set<std::string> active_themes;
+
+    namespace {
+
+        std::filesystem::path
+        realGetStyleMiiUConfigPath()
+        {
+            char buffer[256];
+            auto res = Mocha_GetEnvironmentPath(buffer, sizeof buffer);
+            if (res) {
+                std::runtime_error e{"Could not get Aroma environment path: "s
+                                     + Mocha_GetStatusStr(res)};
+                cerr << "ERROR: " << e.what() << endl;
+                throw e;
+            }
+            return std::filesystem::path{buffer} / "plugins/config/style-mii-u.json";
+        }
+
+        std::filesystem::path
+        GetStyleMiiUConfigPath()
+        {
+            static const std::filesystem::path result = realGetStyleMiiUConfigPath();
+            return result;
+        }
+
+        static void LoadStyleMiiUCfg() {
+            currentStyleMiiUCfg.reset();
+            active_themes.clear();
+            auto stylemiiu_cfg_path = GetStyleMiiUConfigPath();
+            if (!exists(stylemiiu_cfg_path)) {
+                // If config doesn't exist yet, it's not an error.
+                currentStyleMiiUCfg.emplace();
+                return;
+            }
+            StyleMiiUJson json;
+            glz::ex::read_file_json(json, stylemiiu_cfg_path.string(), std::string{});
+            currentStyleMiiUCfg = std::move(json.storageitems);
+            if (currentStyleMiiUCfg->suffleThemes) {
+                auto themes = split(currentStyleMiiUCfg->enabledThemes, "|", true);
+                for (const auto& theme : themes)
+                    if (!theme.empty())
+                        active_themes.insert(theme);
+            } else {
+                active_themes.insert(currentStyleMiiUCfg->enabledThemes);
+            }
+        }
+
+        static void SaveStyleMiiUCfg() {
+            if (!currentStyleMiiUCfg)
+                throw std::runtime_error{"No valid StyleMiiU config state to store."};
+            StyleMiiUJson json;
+            json.storageitems = *currentStyleMiiUCfg;
+            glz::ex::write_file_json(json, GetStyleMiiUConfigPath().string(), std::string{});
+        }
+
+        StyleMiiUCfg&
+        GetStyleMiiUCfg()
+        {
+            try {
+                if (!currentStyleMiiUCfg)
+                    LoadStyleMiiUCfg();
+                return *currentStyleMiiUCfg;
+            }
+            catch (std::exception& e) {
+                cerr << "ERROR in GetSTyleMiiUCfg(): " << e.what() << endl;
+                throw;
+            }
+        }
+
+        std::filesystem::path GetMenuContentPath() {
+            uint64_t menuTitleID = _SYSGetSystemApplicationTitleId(SYSTEM_APP_ID_WII_U_MENU);
+
+            uint32_t menuIDParentDir = menuTitleID >> 32;
+            uint32_t menuIDChildDir = menuTitleID;
+
+            char splitMenuID[18];
+            snprintf(splitMenuID, sizeof splitMenuID, "%08x/%08x", menuIDParentDir, menuIDChildDir);
+
+            return "storage_mlc:/sys/title" / std::filesystem::path{splitMenuID} / "content";
+        }
+
+    } // namespace
+
+
+    void initialize()
     {
-        std::ostringstream ss;
-        ss << file.rdbuf();
-        return ss.str();
+        TRACE_FUNC;
+
+        try {
+            LoadStyleMiiUCfg();
+        }
+        catch (std::exception &e) {
+            cerr << "ERROR: failed to load StyleMiiU config: " << e.what() << endl;
+        }
     }
 
-    std::filesystem::path GetMenuContentPath() {
-        uint64_t menuTitleID = _SYSGetSystemApplicationTitleId(SYSTEM_APP_ID_WII_U_MENU);
-
-        uint32_t menuIDParentDir = menuTitleID >> 32;
-        uint32_t menuIDChildDir = menuTitleID;
-
-        char splitMenuID[18];
-        snprintf(splitMenuID, sizeof splitMenuID, "%08x/%08x", menuIDParentDir, menuIDChildDir);
-
-        return "storage_mlc:/sys/title" / std::filesystem::path{splitMenuID} / "content";
+    void finalize()
+    {
+        TRACE_FUNC;
+        try {
+            SaveStyleMiiUCfg();
+        }
+        catch (std::exception &e) {
+            cerr << "ERROR: failed to save StyleMiiU config: " << e.what() << endl;
+        }
     }
 
     void CreateCacheFile(std::ifstream &sourceFile, const std::filesystem::path &outputPath) {
@@ -586,107 +690,82 @@ namespace Installer {
         DeletePath(meta.themePath);
     }
 
-    std::string GetStyleMiiUConfigPath() {
-        char environmentPathBuffer[0x100];
+    std::string
+    GetCurrentThemeName()
+    {
+        auto& cfg = GetStyleMiiUCfg();
+        if (cfg.suffleThemes)
+            return {};
 
-        MochaUtilsStatus res;
-        if ((res = Mocha_GetEnvironmentPath(environmentPathBuffer, sizeof(environmentPathBuffer))) != MOCHA_RESULT_SUCCESS) {
-            cerr << "Failed to get environment path. Are you running on Aroma? Result: "
-                 << Mocha_GetStatusStr(res) << endl;
-            return ""; // TOOD: should we use the default aroma path as fallback?
-        }
-
-        return std::string(environmentPathBuffer) + "/plugins/config/style-mii-u.json";
-    }
-
-    bool SetCurrentTheme(const InstalledThemeMetadata &meta) {
-        try {
-            cout << "Trying to set current theme: " << meta.themePath << endl;
-            auto styleMiiUConfigPath = GetStyleMiiUConfigPath();
-
-            std::ifstream configFile(styleMiiUConfigPath);
-            if (!configFile.is_open()) {
-                cerr << "Failed to open config file: " << styleMiiUConfigPath << endl;
-                return false;
-            }
-
-            std::string jsonStr = ReadWholeFile(configFile);
-            configFile.close();
-
-            glz::generic configJson;
-            if (auto err = glz::read_json(configJson, jsonStr)) {
-                cerr << "Failed to parse config file: "
-                 << glz::format_error(err, jsonStr) << endl;
-                return false;
-            }
-
-            configJson["storageitems"]["enabledThemes"] = meta.themePath.filename().string();
-
-            auto outputJson = glz::write<glz::opts{.prettify = true}>(configJson);
-            if (!outputJson) {
-                cerr << "Failed to serialize config json" << endl;
-                return false;
-            }
-
-            std::ofstream outFile{styleMiiUConfigPath, std::ios::trunc | std::ios::out};
-            if (!outFile.is_open()) {
-                cerr << "Failed to open for write: " << styleMiiUConfigPath << endl;
-                return false;
-            }
-
-            outFile << *outputJson;
-            outFile.close();
-
-            std::println("Succesfully set {} as current StyleMiiU theme!",
-                         meta.themePath.string());
-
-            return true;
-        }
-        catch (std::exception& e) {
-            cerr << "ERROR in SetCurrentTheme(): " << e.what() << endl;
-            return false;
-        }
-    }
-
-    std::string GetCurrentThemeName() {
-        std::string styleMiiUConfigPath = GetStyleMiiUConfigPath();
-
-        std::ifstream configFile(styleMiiUConfigPath);
-        if (!configFile.is_open()) {
-            cerr << "Failed to open config file: " << styleMiiUConfigPath << endl;
-            return "";
-        }
-
-        std::string jsonStr = ReadWholeFile(configFile);
-        configFile.close();
-
-        glz::generic configJson;
-        if (auto err = glz::read_json(configJson, jsonStr)) {
-            cerr << "Failed to parse config file: "
-                 << glz::format_error(err, jsonStr) << endl;
-            return "";
-        }
-
-        return configJson.at("storageitems").at("enabledThemes").get<std::string>();
+        return cfg.enabledThemes;
     }
 
     std::optional<InstalledThemeMetadata>
-    GetCurrentTheme() {
-        // TODO: handle shuffle mode
+    GetCurrentTheme()
+    {
         auto themeName =  GetCurrentThemeName();
+        if (themeName.empty())
+            return {};
         auto themePath = THEMES_ROOT / themeName;
         if (!exists(themePath))
             return {};
         InstalledThemeMetadata result;
         if (!GetInstalledThemeMetadata(themePath, result))
             return {};
-        return {std::move(result)};
+        return { std::move(result) };
     }
 
     std::filesystem::path
     GetThemePath(const UThemeMetadata& meta)
     {
         return THEMES_ROOT / make_theme_folder_name(meta.themeName, meta.themeID);
+    }
+
+
+    bool IsShuffling() {
+        return GetStyleMiiUCfg().suffleThemes;
+    }
+
+    void ToggleShuffling() {
+        auto &cfg = GetStyleMiiUCfg();
+        cfg.suffleThemes = !cfg.suffleThemes;
+        if (!cfg.suffleThemes) {
+            active_themes.clear();
+            cfg.enabledThemes.clear();
+        }
+    }
+
+    bool IsActive(const InstalledThemeMetadata& meta) {
+        return active_themes.contains(meta.themePath.filename());
+    }
+
+    void SetActive(const InstalledThemeMetadata& meta) {
+        auto& cfg = GetStyleMiiUCfg();
+        if (cfg.suffleThemes) {
+            active_themes.insert(meta.themePath.filename());
+            cfg.enabledThemes.clear();
+            for (const auto& theme : active_themes)
+                cfg.enabledThemes += theme + "|";
+        } else {
+            active_themes.clear();
+            auto theme_str = meta.themePath.filename().string();
+            active_themes.insert(theme_str);
+            cfg.enabledThemes = theme_str;
+        }
+    }
+
+    void UnsetActive(const InstalledThemeMetadata& meta) {
+        auto& cfg = GetStyleMiiUCfg();
+        auto theme_str = meta.themePath.filename().string();
+        if (cfg.suffleThemes) {
+            active_themes.erase(theme_str);
+            cfg.enabledThemes.clear();
+            for (const auto& theme : active_themes)
+                cfg.enabledThemes += theme + "|";
+        } else {
+            if (active_themes.erase(theme_str))
+                cfg.enabledThemes.clear();
+        }
     }
 
 } // namespace Installer

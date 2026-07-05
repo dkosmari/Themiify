@@ -51,7 +51,7 @@ namespace ManageThemesScreen {
     Tab current_tab = Tab::manage_installed;
 
     std::vector<std::filesystem::path> local_uthemes;
-    bool local_uthemes_need_refresh = true;
+    bool local_uthemes_needs_refresh = true;
 
     std::jthread installed_themes_scanner;
     thread_safe<std::vector<InstalledThemeMetadata>> safe_installed_themes;
@@ -70,9 +70,6 @@ namespace ManageThemesScreen {
     std::filesystem::path thumbnail_path;
 
     std::string search;
-
-    std::string current_theme_name;
-    bool current_theme_need_refresh = true;
 
     int similarity_score(std::string haystack, std::string needle) {
         haystack = as_lower_case(haystack);
@@ -147,7 +144,6 @@ namespace ManageThemesScreen {
 
     void refresh_all() {
         refresh_installed_themes();
-        refresh_current_theme();
         refresh_local_uthemes();
     }
 
@@ -155,13 +151,9 @@ namespace ManageThemesScreen {
         installed_themes_scan_state = InstalledThemesScanState::requested;
     }
 
-    void refresh_current_theme() {
-        current_theme_need_refresh = true;
-    }
-
     void refresh_local_uthemes()
     {
-        local_uthemes_need_refresh = true;
+        local_uthemes_needs_refresh = true;
     }
 
     static void text_limited(float width, const std::string& text) {
@@ -173,7 +165,6 @@ namespace ManageThemesScreen {
     }
 
     void show_installed_theme(const Installer::InstalledThemeMetadata& theme_data,
-                              bool is_active,
                               const ImVec2& inner_size,
                               const ImVec2& padding) {
         // NOTE: to create a complex button, we create a button with no text, then overlap
@@ -218,14 +209,21 @@ namespace ManageThemesScreen {
             ImGui::Image((ImTextureID)img, img_size);
         }
 
-        // NOTE: Measure size for the active star, but don't place it yet, to not mess
+        bool is_shuffling = Installer::IsShuffling();
+        bool is_active = Installer::IsActive(theme_data);
+
+        // NOTE: Measure size for the active marker, but don't place it yet, to not mess
         // with the cursor position.
-        const std::string star_label = is_active ? ICON_FA_STAR : ICON_FA_STAR_O;
-        const float star_font_size = 48;
-        ImVec2 star_size;
+
+        const std::string active_label = is_shuffling
+            ? (is_active ? ICON_FA_CHECK_SQUARE_O : ICON_FA_SQUARE_O)
+            : (is_active ? ICON_FA_STAR : ICON_FA_STAR_O);
+
+        const float active_font_size = 48;
+        ImVec2 active_size;
         {
-            Font star_font{nullptr, star_font_size};
-            star_size = ImGui::CalcTextSize(star_label);
+            Font active_font{nullptr, active_font_size};
+            active_size = ImGui::CalcTextSize(active_label);
         }
 
         {
@@ -234,7 +232,7 @@ namespace ManageThemesScreen {
             // covered by the star.
             float name_width = inner_size.x;
             if (!theme_data.previewPaths.empty())
-                name_width -= star_size.x + style.ItemSpacing.x;
+                name_width -= active_size.x + style.ItemSpacing.x;
             text_limited(name_width, theme_data.uthemeMetadata.themeName);
         }
 
@@ -244,27 +242,29 @@ namespace ManageThemesScreen {
             // If there's an image, make sure to limit the width, so it doesn't get
             // covered by the star.
             if (!theme_data.previewPaths.empty())
-                author_width -= star_size.x + style.ItemSpacing.x;
+                author_width -= active_size.x + style.ItemSpacing.x;
             text_limited(author_width, "by " + *theme_data.uthemeMetadata.themeAuthor);
         }
 
-        // Put active star on bottom right.
+        // Put active marker on bottom right.
         {
-            Font star_font{nullptr, star_font_size};
-            StyleColor star_color{ImGuiCol_Text, {1.0f, 0.9f, 0.0f, 1.0f}};
-            ImGui::SetCursorPos(inner_size - star_size);
-            ImGui::Text(star_label);
+            Font active_font{nullptr, active_font_size};
+            StyleColor active_color{ImGuiCol_Text, {1.0f, 0.9f, 0.0f, 1.0f}};
+            ImGui::SetCursorPos(inner_size - active_size);
+            ImGui::Text(active_label);
             if (clicked && ImGui::IsItemHovered()) {
                 clicked = false; // cancel the click
-                // TODO: when shuffle is implemented, this would be a toggle.
-                Installer::SetCurrentTheme(theme_data);
+                if (is_active) {
+                    Installer::UnsetActive(theme_data);
+                } else {
+                    Installer::SetActive(theme_data);
+                }
                 HomeScreen::force_refresh();
-                refresh_current_theme();
             }
         }
 
         if (clicked)
-            ThemeDetailsPopup::open_local(theme_data, is_active);
+            ThemeDetailsPopup::open_local(theme_data);
     }
 
     void show_utheme(const std::filesystem::path& utheme_path) {
@@ -322,16 +322,11 @@ namespace ManageThemesScreen {
     void show_tab_manage_installed() {
         using namespace ImGui::RAII;
 
-        ImGui::AlignTextToFramePadding(); // align vertically with the InputText widget
-        ImGui::Text("Search installed theme:");
-
-        ImGui::SameLine();
-
         SDL_WiiUSetSWKBDHintText("Write some search terms...");
         SDL_WiiUSetSWKBDOKLabel("Search");
         SDL_WiiUSetSWKBDHighlightInitialText(SDL_TRUE);
 
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        ImGui::SetNextItemWidth(300);
         ImGui::InputTextWithHint("##local_search"s, "Search..."s, search);
 
         // if (ImGui::IsItemDeactivatedAfterEdit()) {
@@ -340,11 +335,6 @@ namespace ManageThemesScreen {
 
         if (installed_themes_scan_state == InstalledThemesScanState::requested) {
             scan_installed_themes();
-        }
-
-        if (current_theme_need_refresh) {
-            current_theme_name = Installer::GetCurrentThemeName();
-            current_theme_need_refresh = false;
         }
 
         std::vector<std::size_t> visible_indexes;
@@ -372,6 +362,24 @@ namespace ManageThemesScreen {
             );
         }
 
+        ImGui::SameLine();
+
+        bool is_shuffling = Installer::IsShuffling();
+        if (ImGui::Checkbox("Shuffle", is_shuffling)) {
+            Installer::ToggleShuffling();
+        }
+
+        if (is_shuffling) {
+            ImGui::SameLine();
+            if (ImGui::Button("Enable All")) {
+
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Disable All")) {
+
+            }
+        }
+
         // To keep the search widget visible, put the search results inside
         // another child.
         if (Child search_results{"ThemeGrid"}) {
@@ -386,13 +394,10 @@ namespace ManageThemesScreen {
 
                 for (auto [counter, index] : visible_indexes | std::views::enumerate) {
                     auto& theme_data = (*installed_themes)[index];
-                    bool is_current_theme = current_theme_name == theme_data.themePath.filename();
-
                     ImVec2 grid_pos = { float(counter % 3), float(counter / 3) };
                     ImVec2 pos = grid_pos * (outer_size + spacing);
                     ImGui::SetCursorPos(grid_start_pos + pos);
                     show_installed_theme(theme_data,
-                                         is_current_theme,
                                          inner_size,
                                          padding);
                 }
@@ -407,9 +412,9 @@ namespace ManageThemesScreen {
 
         ImGui::Separator();
 
-        if (local_uthemes_need_refresh) {
+        if (local_uthemes_needs_refresh) {
             scan_local_uthemes();
-            local_uthemes_need_refresh = false;
+            local_uthemes_needs_refresh = false;
         }
 
         for (const auto& utheme_path : local_uthemes)
@@ -443,7 +448,6 @@ namespace ManageThemesScreen {
                                       {tab_width, tab_height})) {
                     current_tab = Tab::manage_installed;
                     refresh_installed_themes();
-                    refresh_current_theme();
                 }
 
                 ImGui::SameLine();

@@ -32,14 +32,6 @@ namespace Installer {
         std::vector<std::filesystem::path> files;
     };
 
-    bool GetUThemeMetadata(const std::filesystem::path &themePath,
-                           UThemeMetadata &meta);
-
-    bool GetInstalledThemeMetadata(const std::filesystem::path &installedThemePath,
-                                   InstalledThemeMetadata &imeta);
-
-    std::vector<InstalledThemeMetadata> GetInstalledThemes(std::stop_token& stopper);
-
     using progress_function_sig = void (const std::string &msg);
     using progress_function_t = std::function<progress_function_sig>;
 
@@ -49,6 +41,17 @@ namespace Installer {
     using error_function_sig = void (const std::exception &e);
     using error_function_t = std::function<error_function_sig>;
 
+    void initialize();
+    void finalize();
+
+    bool GetUThemeMetadata(const std::filesystem::path &themePath,
+                           UThemeMetadata &meta);
+
+    bool GetInstalledThemeMetadata(const std::filesystem::path &installedThemePath,
+                                   InstalledThemeMetadata &imeta);
+
+    std::vector<InstalledThemeMetadata> GetInstalledThemes(std::stop_token& stopper);
+
     void InstallTheme(std::stop_token &stopper,
                       const std::filesystem::path &themePath,
                       UThemeMetadata themeMetadata,
@@ -56,9 +59,19 @@ namespace Installer {
                       success_function_t successCallback,
                       error_function_t errorCallback);
     void DeleteTheme(const InstalledThemeMetadata& meta);
-    bool SetCurrentTheme(const InstalledThemeMetadata &meta);
+
     std::string GetCurrentThemeName();
     std::optional<InstalledThemeMetadata> GetCurrentTheme();
 
     std::filesystem::path GetThemePath(const UThemeMetadata& meta);
+
+    bool IsShuffling();
+    void ToggleShuffling();
+
+    bool IsActive(const InstalledThemeMetadata& meta);
+    void SetActive(const InstalledThemeMetadata& meta);
+    void UnsetActive(const InstalledThemeMetadata& meta);
+
+    void ReloadStyleMiiUCfg();
+
 } // namespace Installer
