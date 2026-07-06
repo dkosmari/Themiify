@@ -137,7 +137,7 @@ namespace Installer {
                 return *currentStyleMiiUCfg;
             }
             catch (std::exception& e) {
-                cerr << "ERROR in GetSTyleMiiUCfg(): " << e.what() << endl;
+                cerr << "ERROR in GetStyleMiiUCfg(): " << e.what() << endl;
                 throw;
             }
         }

@@ -126,6 +126,7 @@ namespace HomeScreen {
         if (!current_theme) {
             if (Installer::IsShuffling()) {
                 ImGui::Text("StyleMiiU is shuffling themes.");
+                ImGui::Text("TODO: show a placeholder image for shuffling");
             } else {
                 ImGui::Text("No current theme found.");
             }
@@ -133,9 +134,10 @@ namespace HomeScreen {
         }
         else {
             if (Child theme_frame{"theme_frame",
-                                  {800, 300},
+                                  {0, 0},
                                   ImGuiChildFlags_NavFlattened |
-                                  ImGuiChildFlags_FrameStyle,
+                                  ImGuiChildFlags_Borders |
+                                  ImGuiChildFlags_AutoResizeY,
                                   ImGuiWindowFlags_NoSavedSettings}) {
                 if (!current_theme->previewPaths.empty()) {
                     auto img = ImageLoader::get(current_theme->previewPaths.front());

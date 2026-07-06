@@ -216,7 +216,7 @@ namespace ManageThemesScreen {
         // with the cursor position.
 
         const std::string active_label = is_shuffling
-            ? (is_active ? ICON_FA_CHECK_SQUARE_O : ICON_FA_SQUARE_O)
+            ? (is_active ? ICON_FA_CHECK_CIRCLE_O : ICON_FA_CIRCLE_O)
             : (is_active ? ICON_FA_STAR : ICON_FA_STAR_O);
 
         const float active_font_size = 48;
