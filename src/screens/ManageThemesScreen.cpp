@@ -322,16 +322,40 @@ namespace ManageThemesScreen {
     void show_tab_manage_installed() {
         using namespace ImGui::RAII;
 
+        const auto &style = ImGui::GetStyle();
+
         SDL_WiiUSetSWKBDHintText("Write some search terms...");
         SDL_WiiUSetSWKBDOKLabel("Search");
         SDL_WiiUSetSWKBDHighlightInitialText(SDL_TRUE);
 
-        ImGui::SetNextItemWidth(300);
-        ImGui::InputTextWithHint("##local_search"s, "Search..."s, search);
+        // Let search widget expand, leaving space for the buttons.
+        const std::string shuffle_label = "Shuffle";
+        const float shuffle_width =
+            ImGui::CalcTextSize(shuffle_label).x +
+            style.ItemInnerSpacing.x +
+            ImGui::GetTextLineHeight() + // defines the size of the box
+            2 * style.FramePadding.x;
 
-        // if (ImGui::IsItemDeactivatedAfterEdit()) {
-        //     cout << "Searching: " << search << endl;
-        // }
+        const std::string enable_all_label = ICON_FA_CHECK_SQUARE_O " All";
+        const float enable_all_width =
+            ImGui::CalcTextSize(enable_all_label).x +
+            2 * style.FramePadding.x;
+
+        const std::string disable_all_label = ICON_FA_SQUARE_O " All";
+        const float disable_all_width =
+            ImGui::CalcTextSize(disable_all_label).x +
+            2 * style.FramePadding.x;
+
+        const float buttons_width =
+            shuffle_width +
+            style.ItemSpacing.x +
+            enable_all_width +
+            style.ItemSpacing.x +
+            disable_all_width;
+
+        auto available = ImGui::GetContentRegionAvail();
+        ImGui::SetNextItemWidth(available.x - style.ItemSpacing.x - buttons_width);
+        ImGui::InputTextWithHint("##local_search"s, "Search..."s, search);
 
         if (installed_themes_scan_state == InstalledThemesScanState::requested) {
             scan_installed_themes();
@@ -371,12 +395,16 @@ namespace ManageThemesScreen {
 
         if (is_shuffling) {
             ImGui::SameLine();
-            if (ImGui::Button("Enable All")) {
-
+            if (ImGui::Button(enable_all_label)) {
+                auto installed_themes = safe_installed_themes.lock();
+                for (auto& theme : *installed_themes)
+                    Installer::SetActive(theme);
             }
             ImGui::SameLine();
-            if (ImGui::Button("Disable All")) {
-
+            if (ImGui::Button(disable_all_label)) {
+                auto installed_themes = safe_installed_themes.lock();
+                for (auto& theme : *installed_themes)
+                    Installer::UnsetActive(theme);
             }
         }
 
