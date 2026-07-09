@@ -165,20 +165,20 @@ namespace ThemeDetailsPopup {
                 }
 
                 bool is_shuffling = Installer::IsShuffling();
-                bool is_active = Installer::IsActive(installedThemeData);
+                bool is_enabled = Installer::IsEnabled(installedThemeData);
 
                 if (is_shuffling) {
-                    if (ImGui::Checkbox("Enable", is_active)) {
-                        if (is_active)
-                            Installer::UnsetActive(installedThemeData);
+                    if (ImGui::Checkbox("Enabled", is_enabled)) {
+                        if (is_enabled)
+                            Installer::Enable(installedThemeData);
                         else
-                            Installer::SetActive(installedThemeData);
+                            Installer::Disable(installedThemeData);
                         HomeScreen::force_refresh();
                     }
                 } else {
-                    Disabled disabled_if{is_active};
+                    Disabled disabled_if{is_enabled};
                     if (ImGui::Button(ICON_FA_STAR " Apply", {-1, 0})) {
-                        Installer::SetActive(installedThemeData);
+                        Installer::Enable(installedThemeData);
                         ImGui::CloseCurrentPopup();
                         HomeScreen::force_refresh();
                     }

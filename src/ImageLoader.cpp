@@ -69,7 +69,7 @@ namespace ImageLoader {
 
     std::string user_agent = App::user_agent;
 
-    std::filesystem::path content_prefix = "fs:/vol/content";
+    const std::filesystem::path content_prefix = "fs:/vol/content";
 
     const std::size_t max_cache_size = 64;
 
@@ -87,12 +87,13 @@ namespace ImageLoader {
         requested,
         loading,
         loaded,
+        converted,
         error,
     };
 
     std::string to_string(LoadState st);
 
-    struct CacheEntry {
+    struct CacheEntry : std::enable_shared_from_this<CacheEntry> {
         std::atomic<LoadState> state{LoadState::requested};
         Timestamp last_use = 0;
 
@@ -114,7 +115,7 @@ namespace ImageLoader {
         void prepare_download();
         void cleanup_download();
 
-        static CacheEntry* get_entry(CURL* handle);
+        static std::shared_ptr<CacheEntry> get_entry(CURL* handle);
     }; // struct CacheEntry
 
     using CacheEntryPtr = std::shared_ptr<CacheEntry>;
@@ -123,6 +124,8 @@ namespace ImageLoader {
 
     async_queue<CacheEntryPtr> requests_queue;
     std::jthread worker_thread;
+
+    async_queue<CacheEntryPtr> convert_queue;
 
     CacheEntry::CacheEntry(Timestamp now,
                            const std::string& location) :
@@ -217,16 +220,16 @@ namespace ImageLoader {
         raw_buf.reset();
     }
 
-    CacheEntry*
+    CacheEntryPtr
     CacheEntry::get_entry(CURL *handle)
     {
         if (!handle)
-            return nullptr;
-        CacheEntry* result = nullptr;
-        auto e = curl_easy_getinfo(handle, CURLINFO_PRIVATE, &result);
+            return {};
+        CacheEntry* self = nullptr;
+        auto e = curl_easy_getinfo(handle, CURLINFO_PRIVATE, &self);
         if (e != CURLE_OK)
-            return nullptr;
-        return result;
+            return {};
+        return self->shared_from_this();
     }
 
     void worker_func(std::stop_token token);
@@ -245,7 +248,7 @@ namespace ImageLoader {
 
         loading_image = IMG_LoadTexture(
             renderer,
-            "fs:/vol/content/ui/theme-placeholder-icon.png");
+            "fs:/vol/content/ui/theme-placeholder-loading.png");
 
         load_error_image = IMG_LoadTexture(
             renderer,
@@ -267,12 +270,18 @@ namespace ImageLoader {
 
     void finalize()
     {
+        COUT << "Stopping convert_queue" << endl;
+        convert_queue.stop();
+
         COUT << "Stopping requests_queue" << endl;
         requests_queue.stop();
 
         COUT << "Destroying thread" << endl;
         worker_thread = {};
         COUT << "Thread destroyed" << endl;
+
+        convert_queue.clear();
+        requests_queue.clear();
 
         COUT << "Clearing cache" << endl;
         cache.clear();
@@ -310,34 +319,15 @@ namespace ImageLoader {
                 entry->last_use = timestamp;
 
                 switch (entry->state.load()) {
-                    case LoadState::loaded:
-                        if (!entry->tex && entry->img) {
-#ifdef MEASURE_CREATE_TEXTURE
-                            Timer timer{"SDL_CreateTextureFromSurface()"};
-                            timer.start();
-#endif
-                            entry->tex = SDL_CreateTextureFromSurface(renderer, entry->img);
-#ifdef MEASURE_CREATE_TEXTURE
-                            timer.stop();
-                            timer.print(COUT) << endl;
-#endif
-                            if (entry->tex)
-                                SDL_SetTextureBlendMode(entry->tex, SDL_BLENDMODE_BLEND);
-
-                            SDL_FreeSurface(entry->img);
-                            entry->img = nullptr;
-                        }
-
-                        if (entry->tex)
-                            return entry->tex;
-
-                        return load_error_image;
+                    case LoadState::converted:
+                        return entry->tex;
 
                     case LoadState::error:
                         return load_error_image;
 
                     case LoadState::requested:
                     case LoadState::loading:
+                    case LoadState::loaded:
                         return loading_image;
 
                     case LoadState::unloaded:
@@ -416,39 +406,28 @@ namespace ImageLoader {
                 entry->location.starts_with("https://")) {
                 entry->prepare_download();
             }
-            else if (entry->location.starts_with("ui/")) {
-                const auto path = content_prefix / entry->location;
-
-#ifdef MEASURE_IMG_LOAD
-                Timer timer{"IMG_Load() for ui/ image"};
-                timer.start();
-#endif
-                entry->img = optimized(IMG_Load(path.c_str()));
-#ifdef MEASURE_IMG_LOAD
-                timer.stop();
-                timer.print(TCOUT) << endl;
-#endif
-                if (!entry->img)
-                    throw std::runtime_error{IMG_GetError()};
-
-                entry->state = LoadState::loaded;
-            }
-            else if (entry->location.starts_with("fs:/")) {
-#ifdef MEASURE_IMG_LOAD
-                Timer timer{"IMG_Load() for fs:/"};
-                timer.start();
-#endif
-                entry->img = optimized(IMG_Load(entry->location.c_str()));
-#ifdef MEASURE_IMG_LOAD
-                timer.stop();
-                timer.print(TCOUT) << endl;
-#endif
-                if (!entry->img)
-                    throw std::runtime_error{IMG_GetError()};
-                entry->state = LoadState::loaded;
-            }
             else {
-                throw std::runtime_error{"invalid location"};
+                // Assume everything else is a local path.
+                std::filesystem::path img_path;
+                if (entry->location.starts_with("ui/"))
+                    img_path = content_prefix / entry->location;
+                else
+                    img_path = entry->location;
+
+#ifdef MEASURE_IMG_LOAD
+                Timer timer{"IMG_Load()"};
+                timer.start();
+#endif
+                entry->img = optimized(IMG_Load(img_path.c_str()));
+#ifdef MEASURE_IMG_LOAD
+                timer.stop();
+                timer.print(TCOUT) << endl;
+#endif
+                if (!entry->img)
+                    throw std::runtime_error{IMG_GetError()};
+
+                entry->state = LoadState::loaded;
+                convert_queue.push(entry);
             }
         }
         catch (std::exception& e) {
@@ -562,6 +541,27 @@ namespace ImageLoader {
     {
         trim_cache();
         ++timestamp;
+
+        // Convert exactly one surface into a texture.
+        if (auto entry = convert_queue.try_pop()) {
+            if ((*entry)->state == LoadState::loaded) {
+#ifdef MEASURE_CREATE_TEXTURE
+                Timer timer{"SDL_CreateTextureFromSurface()"};
+                timer.start();
+#endif
+                (*entry)->tex = SDL_CreateTextureFromSurface(renderer, (*entry)->img);
+#ifdef MEASURE_CREATE_TEXTURE
+                timer.stop();
+                timer.print(COUT) << endl;
+#endif
+                if ((*entry)->tex)
+                    SDL_SetTextureBlendMode((*entry)->tex, SDL_BLENDMODE_BLEND);
+
+                SDL_FreeSurface((*entry)->img);
+                (*entry)->img = nullptr;
+                (*entry)->state = LoadState::converted;
+            }
+        }
     }
 
     void handle_finished_downloads()
@@ -621,6 +621,7 @@ namespace ImageLoader {
                     throw std::runtime_error{IMG_GetError()};
 
                 entry->state = LoadState::loaded;
+                convert_queue.push(entry);
             }
             catch (std::exception& e) {
                 TCERR << "ERROR: ImageLoader::handle_finished_downloads(): " << e.what() << endl;
@@ -659,7 +660,7 @@ namespace ImageLoader {
 
                 handle_finished_downloads();
 
-                std::this_thread::sleep_for(50ms);
+                // std::this_thread::sleep_for(50ms);
             }
         }
         catch (std::exception& e) {

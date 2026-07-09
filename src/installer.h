@@ -44,6 +44,8 @@ namespace Installer {
     void initialize();
     void finalize();
 
+    void process();
+
     bool GetUThemeMetadata(const std::filesystem::path &themePath,
                            UThemeMetadata &meta);
 
@@ -68,9 +70,9 @@ namespace Installer {
     bool IsShuffling();
     void ToggleShuffling();
 
-    bool IsActive(const InstalledThemeMetadata& meta);
-    void SetActive(const InstalledThemeMetadata& meta);
-    void UnsetActive(const InstalledThemeMetadata& meta);
+    bool IsEnabled(const InstalledThemeMetadata& meta);
+    void Enable(const InstalledThemeMetadata& meta);
+    void Disable(const InstalledThemeMetadata& meta);
 
     void ReloadStyleMiiUCfg();
 

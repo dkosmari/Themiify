@@ -35,6 +35,7 @@
 #include "installer.h"
 #include "utils.h"
 #include "tracer.hpp"
+#include "thread_safe.hpp"
 
 using std::cout;
 using std::cerr;
@@ -73,7 +74,11 @@ namespace Installer {
 
     std::optional<StyleMiiUCfg> currentStyleMiiUCfg;
 
-    std::unordered_set<std::string> active_themes;
+    std::unordered_set<std::string> enabled_themes;
+
+    using InstalledThemesList = std::vector<InstalledThemeMetadata>;
+
+    thread_safe<InstalledThemesList> safe_themes_list;
 
     namespace {
 
@@ -100,7 +105,7 @@ namespace Installer {
 
         static void LoadStyleMiiUCfg() {
             currentStyleMiiUCfg.reset();
-            active_themes.clear();
+            enabled_themes.clear();
             auto stylemiiu_cfg_path = GetStyleMiiUConfigPath();
             if (!exists(stylemiiu_cfg_path)) {
                 // If config doesn't exist yet, it's not an error.
@@ -114,9 +119,9 @@ namespace Installer {
                 auto themes = split(currentStyleMiiUCfg->enabledThemes, "|", true);
                 for (const auto& theme : themes)
                     if (!theme.empty())
-                        active_themes.insert(theme);
+                        enabled_themes.insert(theme);
             } else {
-                active_themes.insert(currentStyleMiiUCfg->enabledThemes);
+                enabled_themes.insert(currentStyleMiiUCfg->enabledThemes);
             }
         }
 
@@ -125,7 +130,11 @@ namespace Installer {
                 throw std::runtime_error{"No valid StyleMiiU config state to store."};
             StyleMiiUJson json;
             json.storageitems = *currentStyleMiiUCfg;
-            glz::ex::write_file_json(json, GetStyleMiiUConfigPath().string(), std::string{});
+            glz::ex::write_file_json<glz::opts{.prettify = true}>(
+                json,
+                GetStyleMiiUConfigPath().string(),
+                std::string{}
+            );
         }
 
         StyleMiiUCfg&
@@ -694,10 +703,10 @@ namespace Installer {
     GetCurrentThemeName()
     {
         auto& cfg = GetStyleMiiUCfg();
-        if (cfg.suffleThemes)
+        if (enabled_themes.size() == 1)
+            return *enabled_themes.begin();
+        else
             return {};
-
-        return cfg.enabledThemes;
     }
 
     std::optional<InstalledThemeMetadata>
@@ -730,40 +739,40 @@ namespace Installer {
         auto &cfg = GetStyleMiiUCfg();
         cfg.suffleThemes = !cfg.suffleThemes;
         if (!cfg.suffleThemes) {
-            active_themes.clear();
+            enabled_themes.clear();
             cfg.enabledThemes.clear();
         }
     }
 
-    bool IsActive(const InstalledThemeMetadata& meta) {
-        return active_themes.contains(meta.themePath.filename());
+    bool IsEnabled(const InstalledThemeMetadata& meta) {
+        return enabled_themes.contains(meta.themePath.filename());
     }
 
-    void SetActive(const InstalledThemeMetadata& meta) {
+    void Enable(const InstalledThemeMetadata& meta) {
         auto& cfg = GetStyleMiiUCfg();
         if (cfg.suffleThemes) {
-            active_themes.insert(meta.themePath.filename());
+            enabled_themes.insert(meta.themePath.filename());
             cfg.enabledThemes.clear();
-            for (const auto& theme : active_themes)
+            for (const auto& theme : enabled_themes)
                 cfg.enabledThemes += theme + "|";
         } else {
-            active_themes.clear();
+            enabled_themes.clear();
             auto theme_str = meta.themePath.filename().string();
-            active_themes.insert(theme_str);
+            enabled_themes.insert(theme_str);
             cfg.enabledThemes = theme_str;
         }
     }
 
-    void UnsetActive(const InstalledThemeMetadata& meta) {
+    void Disable(const InstalledThemeMetadata& meta) {
         auto& cfg = GetStyleMiiUCfg();
         auto theme_str = meta.themePath.filename().string();
         if (cfg.suffleThemes) {
-            active_themes.erase(theme_str);
+            enabled_themes.erase(theme_str);
             cfg.enabledThemes.clear();
-            for (const auto& theme : active_themes)
+            for (const auto& theme : enabled_themes)
                 cfg.enabledThemes += theme + "|";
         } else {
-            if (active_themes.erase(theme_str))
+            if (enabled_themes.erase(theme_str))
                 cfg.enabledThemes.clear();
         }
     }

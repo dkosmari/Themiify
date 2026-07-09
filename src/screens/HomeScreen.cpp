@@ -121,30 +121,42 @@ namespace HomeScreen {
             ImGui::Text("Your current theme:");
         }
 
-        ImGui::Spacing();
+        // const ImVec2 img_size = {640, 360};
+        // const ImVec2 img_size = {560, 315};
+        const ImVec2 img_size = {512, 288};
 
-        if (!current_theme) {
-            if (Installer::IsShuffling()) {
-                ImGui::Text("StyleMiiU is shuffling themes.");
-                ImGui::Text("TODO: show a placeholder image for shuffling");
-            } else {
-                ImGui::Text("No current theme found.");
-            }
-            ImGui::Spacing();
-        }
-        else {
-            if (Child theme_frame{"theme_frame",
-                                  {0, 0},
-                                  ImGuiChildFlags_NavFlattened |
-                                  ImGuiChildFlags_Borders |
-                                  ImGuiChildFlags_AutoResizeY,
-                                  ImGuiWindowFlags_NoSavedSettings}) {
-                if (!current_theme->previewPaths.empty()) {
-                    auto img = ImageLoader::get(current_theme->previewPaths.front());
-                    const ImVec2 img_size = {640, 360};
+        if (Child theme_frame{"theme_frame",
+                              {0, 0},
+                              ImGuiChildFlags_NavFlattened |
+                              ImGuiChildFlags_FrameStyle |
+                              ImGuiChildFlags_AutoResizeY,
+                              ImGuiWindowFlags_NoSavedSettings}) {
+
+            StyleVar no_border{ImGuiStyleVar_ImageBorderSize, 0};
+
+            if (!current_theme) {
+                if (Installer::IsShuffling()) {
+                    auto img = ImageLoader::get("ui/theme-placeholder-random.png");
                     ImGui::Image((ImTextureID)img, img_size);
                     ImGui::SameLine();
+                    ImGui::TextWrapped("StyleMiiU is shuffling themes.");
+                } else {
+                    auto img = ImageLoader::get("ui/theme-placeholder-no-theme.png");
+                    ImGui::Image((ImTextureID)img, img_size);
+                    ImGui::SameLine();
+                    ImGui::TextWrapped("No theme set.");
                 }
+            }
+            else {
+                if (!current_theme->previewPaths.empty()) {
+                    auto img = ImageLoader::get(current_theme->previewPaths.front());
+                    ImGui::Image((ImTextureID)img, img_size);
+                } else {
+                    auto img = ImageLoader::get("ui/theme-placeholder-no-preview.png");
+                    ImGui::Image((ImTextureID)img, img_size);
+                }
+
+                ImGui::SameLine();
 
                 {
                     Group right_group;
@@ -152,10 +164,10 @@ namespace HomeScreen {
                     {
                         Font font_guard{nullptr, 30};
                         ImGui::TextWrapped(current_theme->uthemeMetadata.themeName);
-                        if (current_theme->uthemeMetadata.themeAuthor)
-                            ImGui::TextWrapped("by: " +
-                                               *current_theme->uthemeMetadata.themeAuthor);
                     }
+                    if (current_theme->uthemeMetadata.themeAuthor)
+                        ImGui::TextWrapped("by: " +
+                                           *current_theme->uthemeMetadata.themeAuthor);
                 }
             }
         }

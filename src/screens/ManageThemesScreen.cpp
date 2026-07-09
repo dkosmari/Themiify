@@ -202,63 +202,60 @@ namespace ManageThemesScreen {
         ImGui::SetCursorPos(start_pos);
         Group grp;
 
-        if (!theme_data.previewPaths.empty()) {
+        {
+            const ImVec2 img_size = {inner_size.x, inner_size.x * 9.0f / 16.0f};
             StyleVar no_border{ImGuiStyleVar_ImageBorderSize, 0};
-            auto img = ImageLoader::get(theme_data.previewPaths.front());
-            ImVec2 img_size = {inner_size.x, inner_size.x * 9.0f / 16.0f};
+            auto img = !theme_data.previewPaths.empty()
+                ? ImageLoader::get(theme_data.previewPaths.front())
+                : ImageLoader::get("ui/theme-placeholder-no-preview.png");
             ImGui::Image((ImTextureID)img, img_size);
         }
 
         bool is_shuffling = Installer::IsShuffling();
-        bool is_active = Installer::IsActive(theme_data);
+        bool is_enabled = Installer::IsEnabled(theme_data);
 
         // NOTE: Measure size for the active marker, but don't place it yet, to not mess
         // with the cursor position.
 
-        const std::string active_label = is_shuffling
-            ? (is_active ? ICON_FA_CHECK_CIRCLE_O : ICON_FA_CIRCLE_O)
-            : (is_active ? ICON_FA_STAR : ICON_FA_STAR_O);
+        const std::string enabled_label = is_shuffling
+            ? (is_enabled ? ICON_FA_CHECK_CIRCLE_O : ICON_FA_CIRCLE_O)
+            : (is_enabled ? ICON_FA_STAR : ICON_FA_STAR_O);
 
-        const float active_font_size = 48;
-        ImVec2 active_size;
+        const float enabled_font_size = 48;
+        ImVec2 enabled_size;
         {
-            Font active_font{nullptr, active_font_size};
-            active_size = ImGui::CalcTextSize(active_label);
+            Font enabled_font{nullptr, enabled_font_size};
+            enabled_size = ImGui::CalcTextSize(enabled_label);
         }
 
         {
             Font font{nullptr, 24};
-            // If there's an image, make sure to limit the width, so it doesn't get
-            // covered by the star.
-            float name_width = inner_size.x;
-            if (!theme_data.previewPaths.empty())
-                name_width -= active_size.x + style.ItemSpacing.x;
+            // Make sure to limit the name width, so it doesn't get covered by the enabled
+            // icon.
+            float name_width = inner_size.x - enabled_size.x - style.ItemSpacing.x;
             text_limited(name_width, theme_data.uthemeMetadata.themeName);
         }
 
         if (theme_data.uthemeMetadata.themeAuthor) {
             Font font{nullptr, 18};
-            float author_width = inner_size.x;
-            // If there's an image, make sure to limit the width, so it doesn't get
-            // covered by the star.
-            if (!theme_data.previewPaths.empty())
-                author_width -= active_size.x + style.ItemSpacing.x;
+            // Make sure to limit the author width, so it doesn't get
+            // covered by the enabled icon.
+            float author_width = inner_size.x - enabled_size.x - style.ItemSpacing.x;
             text_limited(author_width, "by " + *theme_data.uthemeMetadata.themeAuthor);
         }
 
         // Put active marker on bottom right.
         {
-            Font active_font{nullptr, active_font_size};
-            StyleColor active_color{ImGuiCol_Text, {1.0f, 0.9f, 0.0f, 1.0f}};
-            ImGui::SetCursorPos(inner_size - active_size);
-            ImGui::Text(active_label);
+            Font enabled_font{nullptr, enabled_font_size};
+            StyleColor enabled_color{ImGuiCol_Text, {1.0f, 0.9f, 0.0f, 1.0f}};
+            ImGui::SetCursorPos(inner_size - enabled_size);
+            ImGui::Text(enabled_label);
             if (clicked && ImGui::IsItemHovered()) {
                 clicked = false; // cancel the click
-                if (is_active) {
-                    Installer::UnsetActive(theme_data);
-                } else {
-                    Installer::SetActive(theme_data);
-                }
+                if (is_enabled)
+                    Installer::Disable(theme_data);
+                else
+                    Installer::Enable(theme_data);
                 HomeScreen::force_refresh();
             }
         }
@@ -398,13 +395,13 @@ namespace ManageThemesScreen {
             if (ImGui::Button(enable_all_label)) {
                 auto installed_themes = safe_installed_themes.lock();
                 for (auto& theme : *installed_themes)
-                    Installer::SetActive(theme);
+                    Installer::Enable(theme);
             }
             ImGui::SameLine();
             if (ImGui::Button(disable_all_label)) {
                 auto installed_themes = safe_installed_themes.lock();
                 for (auto& theme : *installed_themes)
-                    Installer::UnsetActive(theme);
+                    Installer::Disable(theme);
             }
         }
 

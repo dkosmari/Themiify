@@ -224,7 +224,7 @@ namespace InstallThemePopup {
                         auto theme_path = Installer::GetThemePath(theme_data);
                         Installer::InstalledThemeMetadata imeta;
                         if (Installer::GetInstalledThemeMetadata(theme_path, imeta))
-                            Installer::SetActive(imeta);
+                            Installer::Enable(imeta);
                     }
                 });
 
