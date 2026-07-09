@@ -79,7 +79,7 @@ target_link_libraries(themiify PRIVATE
     PkgConfig::SDL2_mixer
 )
 
-target_compile_definitions(themiify PRIVATE THEMIIFY_VERSION="1.1")
+target_compile_definitions(themiify PRIVATE THEMIIFY_VERSION="1.1-dev")
 
 # run program using wiiload
 
