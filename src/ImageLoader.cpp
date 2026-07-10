@@ -16,14 +16,16 @@
 #include <filesystem>
 #include <functional>
 #include <iostream>
-#include <unordered_map>
+#include <memory>
 #include <optional>
 #include <print>
 #include <queue>
 #include <ranges>
 #include <span>
 #include <string>
+#include <syncstream>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <curl/curl.h>
@@ -36,22 +38,43 @@
 
 #include "App.h"
 #include "async_queue.hpp"
-#include "thread_safe.hpp"
+#include "timer.hpp"
 #include "tracer.hpp"
 
-using std::cout;
-using std::cerr;
 using std::endl;
 using namespace std::literals;
 
+#define COUT (resources->sync_cout)
+#define CERR (resources->sync_cerr)
+
+#define TCOUT (resources->sync_tcout)
+#define TCERR (resources->sync_tcerr)
+
+// #define MEASURE_IMG_LOAD
+// #define MEASURE_CREATE_TEXTURE
+#define MEASURE_GET
+
 namespace ImageLoader {
+
+    struct Resources {
+        std::osyncstream sync_cout{std::cout};
+        std::osyncstream sync_cerr{std::cerr};
+
+        std::osyncstream sync_tcout{std::cout};
+        std::osyncstream sync_tcerr{std::cerr};
+
+    };
+
+    std::optional<Resources> resources;
+
     std::string user_agent = App::user_agent;
 
-    std::filesystem::path content_prefix = "fs:/vol/content";
+    const std::filesystem::path content_prefix = "fs:/vol/content";
 
     const std::size_t max_cache_size = 64;
 
-    std::uint64_t use_counter = 0;
+    using Timestamp = std::uint64_t;
+    Timestamp timestamp = 0;
 
     SDL_Renderer *renderer = nullptr;
     SDL_Texture *load_error_image = nullptr;
@@ -64,57 +87,77 @@ namespace ImageLoader {
         requested,
         loading,
         loaded,
+        converted,
         error,
     };
 
     std::string to_string(LoadState st);
 
-    struct CacheEntry {
-        std::atomic<LoadState> state{LoadState::unloaded};
-        std::uint64_t last_use = 0;
+    struct CacheEntry : std::enable_shared_from_this<CacheEntry> {
+        std::atomic<LoadState> state{LoadState::requested};
+        Timestamp last_use = 0;
 
         SDL_Surface *img = nullptr;
         SDL_Texture *tex = nullptr;
+
+        std::string location;
 
         CURL *easy = nullptr;
         curl_slist *headers = nullptr;
 
         std::optional<std::vector<char>> raw_buf;
-        std::string location;
-    };
 
-    using cache_t = std::unordered_map<std::string, CacheEntry>;
-    thread_safe<cache_t> safe_cache;
+        CacheEntry(Timestamp now,
+                   const std::string& location);
 
-    async_queue<std::string> requests_queue;
+        ~CacheEntry() noexcept;
+
+        void prepare_download();
+        void cleanup_download();
+
+        static std::shared_ptr<CacheEntry> get_entry(CURL* handle);
+    }; // struct CacheEntry
+
+    using CacheEntryPtr = std::shared_ptr<CacheEntry>;
+    using Cache = std::unordered_map<std::string, CacheEntryPtr>;
+    Cache cache;
+
+    async_queue<CacheEntryPtr> requests_queue;
     std::jthread worker_thread;
 
-    static void destroy_entry(CacheEntry& entry)
+    async_queue<CacheEntryPtr> convert_queue;
+
+    CacheEntry::CacheEntry(Timestamp now,
+                           const std::string& location) :
+        last_use{now},
+        location{location}
+    {}
+
+    CacheEntry::~CacheEntry()
+        noexcept
     {
-        if (multi && entry.easy)
-            curl_multi_remove_handle(multi, entry.easy);
+        if (multi && easy)
+            curl_multi_remove_handle(multi, easy);
 
-        if (entry.headers) {
-            curl_slist_free_all(entry.headers);
-            entry.headers = nullptr;
+        if (headers) {
+            curl_slist_free_all(headers);
+            headers = nullptr;
         }
 
-        if (entry.easy) {
-            curl_easy_cleanup(entry.easy);
-            entry.easy = nullptr;
+        if (easy) {
+            curl_easy_cleanup(easy);
+            easy = nullptr;
         }
 
-        if (entry.tex) {
-            SDL_DestroyTexture(entry.tex);
-            entry.tex = nullptr;
+        if (tex) {
+            SDL_DestroyTexture(tex);
+            tex = nullptr;
         }
 
-        if (entry.img) {
-            SDL_FreeSurface(entry.img);
-            entry.img = nullptr;
+        if (img) {
+            SDL_FreeSurface(img);
+            img = nullptr;
         }
-
-        entry.raw_buf.reset();
     }
 
     static size_t write_cb(char* ptr, size_t size, size_t nmemb, void* userdata)
@@ -130,17 +173,82 @@ namespace ImageLoader {
         return total;
     }
 
+    void
+    CacheEntry::prepare_download()
+    {
+        easy = curl_easy_init();
+        if (!easy)
+            throw std::runtime_error{"curl_easy_init() failed"};
+
+        curl_easy_setopt(easy, CURLOPT_PRIVATE, this);
+
+        headers = curl_slist_append(headers, "Accept: image/*");
+        curl_easy_setopt(easy, CURLOPT_VERBOSE, 0L);
+        curl_easy_setopt(easy, CURLOPT_URL, location.data());
+        curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L);
+        curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(easy, CURLOPT_AUTOREFERER, 1L);
+        curl_easy_setopt(easy, CURLOPT_ACCEPT_ENCODING, "");
+        curl_easy_setopt(easy, CURLOPT_TRANSFER_ENCODING, 1L);
+        curl_easy_setopt(easy, CURLOPT_BUFFERSIZE, 65536L);
+        curl_easy_setopt(easy, CURLOPT_TCP_NODELAY, 0L);
+        curl_easy_setopt(easy, CURLOPT_FAILONERROR, 1L);
+        curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, write_cb);
+        curl_easy_setopt(easy, CURLOPT_WRITEDATA, this);
+
+        if (!user_agent.empty())
+            curl_easy_setopt(easy, CURLOPT_USERAGENT, user_agent.data());
+
+        curl_multi_add_handle(multi, easy);
+    }
+
+    void
+    CacheEntry::cleanup_download()
+    {
+        curl_multi_remove_handle(multi, easy);
+
+        if (headers) {
+            curl_slist_free_all(headers);
+            headers = nullptr;
+        }
+
+        if (easy) {
+            curl_easy_cleanup(easy);
+            easy = nullptr;
+        }
+        raw_buf.reset();
+    }
+
+    CacheEntryPtr
+    CacheEntry::get_entry(CURL *handle)
+    {
+        if (!handle)
+            return {};
+        CacheEntry* self = nullptr;
+        auto e = curl_easy_getinfo(handle, CURLINFO_PRIVATE, &self);
+        if (e != CURLE_OK)
+            return {};
+        return self->shared_from_this();
+    }
+
     void worker_func(std::stop_token token);
 
     void initialize(SDL_Renderer* rend)
     {
+        resources.emplace();
+        COUT.rdbuf()->set_emit_on_sync(true);
+        CERR.rdbuf()->set_emit_on_sync(true);
+        TCOUT.rdbuf()->set_emit_on_sync(true);
+        TCERR.rdbuf()->set_emit_on_sync(true);
+
         curl_global_init(CURL_GLOBAL_DEFAULT);
 
         renderer = rend;
 
         loading_image = IMG_LoadTexture(
             renderer,
-            "fs:/vol/content/ui/theme-placeholder-icon.png");
+            "fs:/vol/content/ui/theme-placeholder-loading.png");
 
         load_error_image = IMG_LoadTexture(
             renderer,
@@ -154,7 +262,7 @@ namespace ImageLoader {
 
         requests_queue.reset();
 
-        cout << "ImageLoader: launching worker thread." << endl;
+        COUT << "ImageLoader: launching worker thread." << endl;
         worker_thread = std::jthread{worker_func};
 
         assert((std::atomic<LoadState>{}.is_lock_free()));
@@ -162,24 +270,23 @@ namespace ImageLoader {
 
     void finalize()
     {
-        cout << "Stopping requests_queue" << endl;
+        COUT << "Stopping convert_queue" << endl;
+        convert_queue.stop();
+
+        COUT << "Stopping requests_queue" << endl;
         requests_queue.stop();
 
-        cout << "Destroying thread" << endl;
+        COUT << "Destroying thread" << endl;
         worker_thread = {};
-        cout << "Thread destroyed" << endl;
+        COUT << "Thread destroyed" << endl;
 
-        {
-            cout << "Clearing safe_cache" << endl;
-            auto cache = safe_cache.lock();
+        convert_queue.clear();
+        requests_queue.clear();
 
-            for (auto& [location, entry] : *cache)
-                destroy_entry(entry);
+        COUT << "Clearing cache" << endl;
+        cache.clear();
 
-            cache->clear();
-        }
-
-        cout << "Destroying predefined icons" << endl;
+        COUT << "Destroying predefined icons" << endl;
 
         if (loading_image) {
             SDL_DestroyTexture(loading_image);
@@ -192,152 +299,144 @@ namespace ImageLoader {
         }
 
         curl_global_cleanup();
+
+        resources.reset();
     }
 
     SDL_Texture* get(const std::string& location)
     {
-        ++use_counter;
+#ifdef MEASURE_GET
+        TimerReporter get_timer{COUT, "ImageLoader::get()", 5ms};
+#endif
 
-        auto cache = safe_cache.lock();
-        auto it = cache->find(location);
+        CacheEntryPtr entry;
+        auto it = cache.find(location);
+        if (it != cache.end())
+            entry = it->second;
 
         try {
-            if (it != cache->end()) {
-                auto& entry = it->second;
-                entry.last_use = use_counter;
+            if (entry) {
+                entry->last_use = timestamp;
 
-                switch (entry.state.load()) {
-                    case LoadState::loaded:
-                        if (!entry.tex && entry.img) {
-                            entry.tex = SDL_CreateTextureFromSurface(renderer, entry.img);
-                            if (entry.tex)
-                                SDL_SetTextureBlendMode(entry.tex, SDL_BLENDMODE_BLEND);
-
-                            SDL_FreeSurface(entry.img);
-                            entry.img = nullptr;
-                        }
-
-                        if (entry.tex)
-                            return entry.tex;
-
-                        return load_error_image;
+                switch (entry->state.load()) {
+                    case LoadState::converted:
+                        return entry->tex;
 
                     case LoadState::error:
                         return load_error_image;
 
                     case LoadState::requested:
                     case LoadState::loading:
+                    case LoadState::loaded:
                         return loading_image;
 
                     case LoadState::unloaded:
-                        entry.state = LoadState::requested;
-                        requests_queue.push(location);
+                        entry->state = LoadState::requested;
+                        requests_queue.push(entry);
                         return loading_image;
 
                     default:
                         throw std::logic_error{
-                            "invalid entry state: " + to_string(entry.state.load())
+                            "invalid entry state: " + to_string(entry->state.load())
                         };
                 }
+            } else {
+                // entry not found, so prepare a request
+                entry = std::make_shared<CacheEntry>(timestamp, location);
+                cache.emplace(location, entry);
+                requests_queue.push(std::move(entry));
+                return loading_image;
             }
-
-            auto& entry = (*cache)[location];
-            entry.state = LoadState::requested;
-            entry.last_use = use_counter;
-
-            requests_queue.push(location);
-
-            return loading_image;
         }
         catch (std::exception& e) {
-            cerr << "ERROR: ImageLoader::get(): " << e.what() << endl;
+            CERR << "ERROR: ImageLoader::get(): " << e.what() << endl;
             return load_error_image;
         }
     }
 
-    CacheEntry* find(thread_safe<cache_t>::guard<cache_t>& cache, CURL* easy)
+    /*
+     * NOTE: GX2 only supports a few texture formats, so this allows converting the image
+     * to a supported format early.
+     */
+    static SDL_Surface* optimized(SDL_Surface* input)
     {
-        for (auto& [location, entry] : *cache) {
-            if (entry.easy == easy)
-                return &entry;
+        if (!input)
+            return nullptr;
+        switch (input->format->format) {
+            // Supported formats, see SDL_render_wiiu.h from the SDL2 port.
+            case SDL_PIXELFORMAT_ARGB4444:
+            case SDL_PIXELFORMAT_RGBA4444:
+            case SDL_PIXELFORMAT_ABGR4444:
+            case SDL_PIXELFORMAT_BGRA4444:
+            case SDL_PIXELFORMAT_ARGB1555:
+            case SDL_PIXELFORMAT_ABGR1555:
+            case SDL_PIXELFORMAT_RGBA5551:
+            case SDL_PIXELFORMAT_BGRA5551:
+            case SDL_PIXELFORMAT_RGB565:
+            case SDL_PIXELFORMAT_BGR565:
+            case SDL_PIXELFORMAT_RGBX8888:
+            case SDL_PIXELFORMAT_RGBA8888:
+            case SDL_PIXELFORMAT_ARGB8888:
+            case SDL_PIXELFORMAT_BGRX8888:
+            case SDL_PIXELFORMAT_BGRA8888:
+            case SDL_PIXELFORMAT_ABGR8888:
+            case SDL_PIXELFORMAT_ARGB2101010:
+                return input;
+            default:
+                auto output = SDL_ConvertSurfaceFormat(input, SDL_PIXELFORMAT_RGBA32, 0);
+                SDL_FreeSurface(input);
+                return output;
         }
-
-        return nullptr;
     }
 
-    void process_one_request(const std::string& location)
+    void process_one_request(CacheEntryPtr& entry)
     {
-        auto cache = safe_cache.lock();
-        auto it = cache->find(location);
-
-        if (it == cache->end())
+        if (!entry)
             return;
-
-        auto& entry = it->second;
-
         LoadState expected = LoadState::requested;
-        if (!entry.state.compare_exchange_strong(expected, LoadState::loading)) {
-            cerr << "ERROR: ImageLoader::process_one_request() wrong cache entry state: "
-                 << to_string(expected)
-                 << endl;
+        if (!entry->state.compare_exchange_strong(expected, LoadState::loading)) {
+            TCERR << "ERROR: ImageLoader::process_one_request() wrong cache entry state: "
+                  << to_string(expected)
+                  << endl;
             return;
         }
 
-        entry.location = location;
-
         try {
-            if (location.starts_with("http://") || location.starts_with("https://")) {
-                entry.easy = curl_easy_init();
-                if (!entry.easy)
-                    throw std::runtime_error{"curl_easy_init() failed"};
-
-                entry.headers = curl_slist_append(entry.headers, "Accept: image/*");
-
-                curl_easy_setopt(entry.easy, CURLOPT_VERBOSE, 1L);
-                curl_easy_setopt(entry.easy, CURLOPT_URL, location.c_str());
-                curl_easy_setopt(entry.easy, CURLOPT_HTTPHEADER, entry.headers);
-                curl_easy_setopt(entry.easy, CURLOPT_SSL_VERIFYPEER, 1L);
-                curl_easy_setopt(entry.easy, CURLOPT_FOLLOWLOCATION, 1L);
-                curl_easy_setopt(entry.easy, CURLOPT_AUTOREFERER, 1L);
-                curl_easy_setopt(entry.easy, CURLOPT_ACCEPT_ENCODING, "");
-                curl_easy_setopt(entry.easy, CURLOPT_TRANSFER_ENCODING, 1L);
-                curl_easy_setopt(entry.easy, CURLOPT_BUFFERSIZE, 65536L);
-                curl_easy_setopt(entry.easy, CURLOPT_TCP_NODELAY, 0L);
-                curl_easy_setopt(entry.easy, CURLOPT_FAILONERROR, 1L);
-                curl_easy_setopt(entry.easy, CURLOPT_WRITEFUNCTION, write_cb);
-                curl_easy_setopt(entry.easy, CURLOPT_WRITEDATA, &entry);
-
-                if (!user_agent.empty())
-                    curl_easy_setopt(entry.easy, CURLOPT_USERAGENT, user_agent.c_str());
-
-                curl_multi_add_handle(multi, entry.easy);
-            }
-            else if (location.starts_with("ui/")) {
-                const auto path = content_prefix / location;
-
-                entry.img = IMG_Load(path.c_str());
-                if (!entry.img)
-                    throw std::runtime_error{IMG_GetError()};
-
-                entry.state = LoadState::loaded;
-            }
-            else if (location.starts_with("fs:/")) {
-                entry.img = IMG_Load(location.c_str());
-                if (!entry.img)
-                    throw std::runtime_error{IMG_GetError()};
-                entry.state = LoadState::loaded;
+            if (entry->location.starts_with("http://") ||
+                entry->location.starts_with("https://")) {
+                entry->prepare_download();
             }
             else {
-                throw std::runtime_error{"invalid location"};
+                // Assume everything else is a local path.
+                std::filesystem::path img_path;
+                if (entry->location.starts_with("ui/"))
+                    img_path = content_prefix / entry->location;
+                else
+                    img_path = entry->location;
+
+#ifdef MEASURE_IMG_LOAD
+                Timer timer{"IMG_Load()"};
+                timer.start();
+#endif
+                entry->img = optimized(IMG_Load(img_path.c_str()));
+#ifdef MEASURE_IMG_LOAD
+                timer.stop();
+                timer.print(TCOUT) << endl;
+#endif
+                if (!entry->img)
+                    throw std::runtime_error{IMG_GetError()};
+
+                entry->state = LoadState::loaded;
+                convert_queue.push(entry);
             }
         }
         catch (std::exception& e) {
-            std::println(cerr,
+            std::println(TCERR,
                          "ERROR: ImageLoader::process_one_request(): location=\"{}\", exception={}",
-                         location,
+                         entry->location,
                          e.what());
 
-            entry.state = LoadState::error;
+            entry->state = LoadState::error;
         }
     }
 
@@ -380,24 +479,32 @@ namespace ImageLoader {
         }
     }
 
-    std::uint64_t& by_last_use(cache_t::iterator it) noexcept
+    Timestamp& by_last_use(const Cache::iterator& it) noexcept
     {
-        return it->second.last_use;
+        return it->second->last_use;
     }
+
+    struct CompareLastUse {
+        bool
+        operator ()(const Cache::iterator& a, const Cache::iterator& b)
+            const noexcept
+        {
+            return by_last_use(a) < by_last_use(b);
+        }
+    };
 
     void trim_cache()
     {
-        auto cache = safe_cache.lock();
-
-        if (cache->size() <= max_cache_size)
+        if (cache.size() <= max_cache_size)
             return;
 
-        std::size_t excess = cache->size() - max_cache_size;
+        std::size_t excess = cache.size() - max_cache_size;
 
-        std::vector<cache_t::iterator> to_remove(excess);
+#if 1
+        std::vector<Cache::iterator> to_remove(excess);
         auto to_remove_end = to_remove.begin();
 
-        for (auto it = cache->begin(); it != cache->end(); ++it) {
+        for (auto it = cache.begin(); it != cache.end(); ++it) {
             if (to_remove_end != to_remove.end()) {
                 *to_remove_end++ = it;
                 std::ranges::push_heap(to_remove.begin(),
@@ -412,10 +519,48 @@ namespace ImageLoader {
                 }
             }
         }
+        for (auto it : to_remove)
+            cache.erase(it);
+#else
+        std::priority_queue<Cache::iterator,
+                            std::vector<Cache::iterator>,
+                            CompareLastUse> to_remove;
+        for (auto it = cache.begin(); it != cache.end(); ++it) {
+            to_remove.push(it);
+            if (to_remove.size() > excess)
+                to_remove.pop();
+        }
+        while (!to_remove.empty()) {
+            cache.erase(to_remove.top());
+            to_remove.pop();
+        }
+#endif
+    }
 
-        for (auto it : to_remove) {
-            destroy_entry(it->second);
-            cache->erase(it);
+    void process()
+    {
+        trim_cache();
+        ++timestamp;
+
+        // Convert exactly one surface into a texture.
+        if (auto entry = convert_queue.try_pop()) {
+            if ((*entry)->state == LoadState::loaded) {
+#ifdef MEASURE_CREATE_TEXTURE
+                Timer timer{"SDL_CreateTextureFromSurface()"};
+                timer.start();
+#endif
+                (*entry)->tex = SDL_CreateTextureFromSurface(renderer, (*entry)->img);
+#ifdef MEASURE_CREATE_TEXTURE
+                timer.stop();
+                timer.print(COUT) << endl;
+#endif
+                if ((*entry)->tex)
+                    SDL_SetTextureBlendMode((*entry)->tex, SDL_BLENDMODE_BLEND);
+
+                SDL_FreeSurface((*entry)->img);
+                (*entry)->img = nullptr;
+                (*entry)->state = LoadState::converted;
+            }
         }
     }
 
@@ -429,11 +574,9 @@ namespace ImageLoader {
 
             CURL* easy = msg->easy_handle;
 
-            auto cache = safe_cache.lock();
-            auto* entry = find(cache, easy);
-
+            auto entry = CacheEntry::get_entry(easy);
             if (!entry) {
-                cerr << "ERROR: ImageLoader::handle_finished_downloads(): failed to find entry" << endl;
+                TCERR << "ERROR: ImageLoader::handle_finished_downloads(): no entry" << endl;
                 curl_multi_remove_handle(multi, easy);
                 curl_easy_cleanup(easy);
                 continue;
@@ -465,30 +608,27 @@ namespace ImageLoader {
                 if (!rw)
                     throw std::runtime_error{SDL_GetError()};
 
-                entry->img = IMG_Load_RW(rw, 1);
+#ifdef MEASURE_IMG_LOAD
+                Timer timer{"IMG_Load_RW()"};
+                timer.start();
+#endif
+                entry->img = optimized(IMG_Load_RW(rw, 1));
+#ifdef MEASURE_IMG_LOAD
+                timer.stop();
+                timer.print(TCOUT) << endl;
+#endif
                 if (!entry->img)
                     throw std::runtime_error{IMG_GetError()};
 
                 entry->state = LoadState::loaded;
+                convert_queue.push(entry);
             }
             catch (std::exception& e) {
-                cerr << "ERROR: ImageLoader::handle_finished_downloads(): " << e.what() << endl;
+                TCERR << "ERROR: ImageLoader::handle_finished_downloads(): " << e.what() << endl;
                 entry->state = LoadState::error;
             }
 
-            curl_multi_remove_handle(multi, entry->easy);
-
-            if (entry->headers) {
-                curl_slist_free_all(entry->headers);
-                entry->headers = nullptr;
-            }
-
-            if (entry->easy) {
-                curl_easy_cleanup(entry->easy);
-                entry->easy = nullptr;
-            }
-
-            entry->raw_buf.reset();
+            entry->cleanup_download();
         }
     }
 
@@ -503,29 +643,28 @@ namespace ImageLoader {
             curl_multi_setopt(multi, CURLMOPT_MAXCONNECTS, 10L);
 
             while (!token.stop_requested()) {
-                auto location = requests_queue.try_pop_for(50ms);
+                auto entry = requests_queue.try_pop_for(50ms);
 
-                if (location) {
-                    process_one_request(*location);
+                if (entry) {
+                    process_one_request(*entry);
                 }
-                else if (location.error() == async_queue_error::stop) {
+                else if (entry.error() == async_queue_error::stop) {
                     break;
                 }
-                else if (location.error() == async_queue_error::locked) {
-                    cout << "WARNING: requests_queue was locked" << endl;
+                else if (entry.error() == async_queue_error::locked) {
+                    TCOUT << "WARNING: requests_queue was locked" << endl;
                 }
 
                 int running = 0;
                 curl_multi_perform(multi, &running);
 
                 handle_finished_downloads();
-                trim_cache();
 
-                std::this_thread::sleep_for(50ms);
+                // std::this_thread::sleep_for(50ms);
             }
         }
         catch (std::exception& e) {
-            cerr << "ERROR: ImageLoader::worker_func(): " << e.what() << endl;
+            TCERR << "ERROR: ImageLoader::worker_func(): " << e.what() << endl;
         }
 
         if (multi) {

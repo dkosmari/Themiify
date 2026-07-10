@@ -3,6 +3,7 @@
 #include <iostream>
 #include <ranges>
 #include <string_view>
+#include <tuple>
 
 #include <sys/iosupport.h>
 
@@ -163,4 +164,68 @@ make_theme_folder_name(const std::string& name,
         result += " (" + clean_theme_id + ")";
     }
     return sanitize_element(result);
+}
+
+
+// Used by the split() functions.
+namespace {
+
+    std::tuple<std::string::size_type,
+               std::vector<std::string>::size_type>
+    find_first_of(const std::string& haystack,
+                  const std::vector<std::string>& needles,
+                  std::string::size_type start = 0)
+    {
+        std::string::size_type result_pos = std::string::npos;
+        std::vector<std::string>::size_type result_index = 0;
+        for (std::vector<std::string>::size_type i = 0; i < needles.size(); ++i) {
+            auto pos = haystack.find(needles[i], start);
+            if (pos < result_pos) {
+                result_pos = pos;
+                result_index = i;
+            }
+        }
+        return { result_pos, result_index };
+    }
+
+} // namespace
+
+std::vector<std::string>
+split(const std::string& input,
+      const std::vector<std::string>& separators,
+      bool compress,
+      std::size_t max_tokens)
+{
+    std::vector<std::string> result;
+
+    using size_type = std::string::size_type;
+    auto [sep_start, sep_index] = find_first_of(input, separators);
+    size_type tok_start = 0;
+
+    // Loop until no more separators are found.
+    while (sep_start != std::string::npos) {
+        if (!compress || sep_start > tok_start) {
+            // If this token reaches the maximum allowed, stop the looop
+            if (max_tokens && result.size() + 1 == max_tokens)
+                break;
+            result.push_back(input.substr(tok_start, sep_start - tok_start));
+        }
+        tok_start = sep_start + separators[sep_index].size();
+        if (tok_start >= input.size())
+            break;
+        std::tie(sep_start, sep_index) = find_first_of(input, separators, tok_start);
+    }
+    // The remainder of the string is the last token, unless (compress && empty)
+    if (!compress || tok_start < input.size())
+        result.push_back(input.substr(tok_start));
+    return result;
+}
+
+std::vector<std::string>
+split(const std::string& input,
+      const std::string& separator,
+      bool compress,
+      std::size_t max_tokens)
+{
+    return split(input, std::vector{separator}, compress, max_tokens);
 }

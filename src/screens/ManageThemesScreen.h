@@ -20,8 +20,6 @@ namespace ManageThemesScreen {
 
     void refresh_installed_themes();
 
-    void refresh_current_theme();
-
     void refresh_local_uthemes();
 
     void process_ui();

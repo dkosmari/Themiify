@@ -13,6 +13,7 @@
 #include <string>
 #include <optional>
 #include <filesystem>
+#include <vector>
 
 #ifndef THEMIIFY_VERSION
 #define THEMIIFY_VERSION "?.?"
@@ -60,3 +61,19 @@ make_theme_id_filename(const std::string& themeID);
 std::filesystem::path
 make_theme_folder_name(const std::string& name,
                        const std::optional<std::string>& themeID);
+
+
+
+[[nodiscard]]
+std::vector<std::string>
+split(const std::string& input,
+      const std::vector<std::string>& separators = {","},
+      bool compress = true,
+      std::size_t max_tokens = 0);
+
+[[nodiscard]]
+std::vector<std::string>
+split(const std::string& input,
+      const std::string& separator = ",",
+      bool compress = true,
+      std::size_t max_tokens = 0);

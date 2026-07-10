@@ -19,14 +19,13 @@ add_library(imgui STATIC
 )
 
 target_include_directories(imgui PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/misc/carousel
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/misc/cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/imgui/misc/freetype
 )
-target_compile_definitions(imgui PUBLIC IMGUI_USER_CONFIG="custom_imconfig.h")
+target_compile_definitions(imgui PUBLIC IMGUI_USER_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/custom_imconfig.h")
 
 target_link_libraries(imgui PUBLIC PkgConfig::sdl2 PkgConfig::freetype2)
 

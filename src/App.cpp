@@ -15,7 +15,10 @@
 #include "DownloadManager.h"
 #include "Camera.h"
 #include "utils.h"
+#include "installer.h"
+#include "timer.hpp"
 
+#include <chrono>
 #include <fstream>
 #include <iostream>
 #include <span>
@@ -53,6 +56,7 @@
 using std::cout;
 using std::cerr;
 using std::endl;
+using namespace std::literals;
 
 namespace App {
     SDL_Window *window;
@@ -238,6 +242,8 @@ namespace App {
         Camera::initialize(renderer);
         Camera::open();
 
+        Installer::initialize();
+
         DownloadManager::initialize(user_agent);
         ImageLoader::initialize(renderer);
         NavBar::initialize(renderer);
@@ -277,6 +283,7 @@ namespace App {
 
         NavBar::finalize();
         ContentPanel::finalize();
+        Installer::finalize();
         ImageLoader::finalize();
         DownloadManager::finalize();
 
@@ -348,6 +355,8 @@ namespace App {
                 }
             }
 
+            ImageLoader::process();
+
             ImGui_ImplSDLRenderer2_NewFrame();
             ImGui_ImplSDL2_NewFrame();
 
@@ -378,8 +387,13 @@ namespace App {
                     StyleVar restore_border{ImGuiStyleVar_WindowBorderSize, orig_border};
                     StyleVar restore_rounding{ImGuiStyleVar_WindowRounding, orig_rounding};
                     NavBar::process_ui();
-                    ImGui::SameLine(0, 0); // NOTE: ignore ItemSpacing
-                    ContentPanel::process_ui(NavBar::get_current_tab());
+                    ImGui::SameLine(0, 9); // NOTE: override ItemSpacing
+                    {
+                        TimerReporter slow_content{std::cout,
+                                                   "ContentPanel::process_ui()",
+                                                   10ms};
+                        ContentPanel::process_ui(NavBar::get_current_tab());
+                    }
                 }
             }
 

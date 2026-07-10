@@ -42,7 +42,7 @@ namespace HomeScreen {
 
     SDL_Texture *themiify_logo = nullptr;
 
-    std::optional<InstalledThemeMetadata> current_theme_data;
+    std::optional<InstalledThemeMetadata> current_theme;
 
     bool current_theme_refresh = true;
 
@@ -63,7 +63,7 @@ namespace HomeScreen {
     }
 
     void refresh_current_theme() {
-        current_theme_data = Installer::GetCurrentTheme();
+        current_theme = Installer::GetCurrentTheme();
         current_theme_refresh = false;
     }
 
@@ -111,6 +111,65 @@ namespace HomeScreen {
         if (themiify_logo) {
             SDL_DestroyTexture(themiify_logo);
             themiify_logo = nullptr;
+        }
+    }
+
+    void show_current_theme() {
+        using namespace ImGui::RAII;
+        {
+            Font font{nullptr, 35};
+            ImGui::Text("Your current theme:");
+        }
+
+        // const ImVec2 img_size = {640, 360};
+        // const ImVec2 img_size = {560, 315};
+        const ImVec2 img_size = {512, 288};
+
+        if (Child theme_frame{"theme_frame",
+                              {0, 0},
+                              ImGuiChildFlags_NavFlattened |
+                              ImGuiChildFlags_FrameStyle |
+                              ImGuiChildFlags_AutoResizeY,
+                              ImGuiWindowFlags_NoSavedSettings}) {
+
+            StyleVar no_border{ImGuiStyleVar_ImageBorderSize, 0};
+
+            if (!current_theme) {
+                if (Installer::IsShuffling()) {
+                    auto img = ImageLoader::get("ui/theme-placeholder-random.png");
+                    ImGui::Image((ImTextureID)img, img_size);
+                    ImGui::SameLine();
+                    ImGui::TextWrapped("StyleMiiU is shuffling themes.");
+                } else {
+                    auto img = ImageLoader::get("ui/theme-placeholder-no-theme.png");
+                    ImGui::Image((ImTextureID)img, img_size);
+                    ImGui::SameLine();
+                    ImGui::TextWrapped("No theme set.");
+                }
+            }
+            else {
+                if (!current_theme->previewPaths.empty()) {
+                    auto img = ImageLoader::get(current_theme->previewPaths.front());
+                    ImGui::Image((ImTextureID)img, img_size);
+                } else {
+                    auto img = ImageLoader::get("ui/theme-placeholder-no-preview.png");
+                    ImGui::Image((ImTextureID)img, img_size);
+                }
+
+                ImGui::SameLine();
+
+                {
+                    Group right_group;
+
+                    {
+                        Font font_guard{nullptr, 30};
+                        ImGui::TextWrapped(current_theme->uthemeMetadata.themeName);
+                    }
+                    if (current_theme->uthemeMetadata.themeAuthor)
+                        ImGui::TextWrapped("by: " +
+                                           *current_theme->uthemeMetadata.themeAuthor);
+                }
+            }
         }
     }
 
@@ -166,51 +225,7 @@ namespace HomeScreen {
         if (!scrollable_content)
             return;
 
-        {
-            Font font{nullptr, 35};
-            ImGui::Text("Your current theme:");
-        }
-
-        ImGui::Spacing();
-
-        if (!current_theme_data) {
-            ImGui::Text("No current theme found.");
-            ImGui::Spacing();
-        }
-        else {
-            ImGui::Indent(140);
-
-            {
-                Child theme_frame{
-                    "CurrentTheme",
-                    {800, 300},
-                    ImGuiChildFlags_NavFlattened |
-                    ImGuiChildFlags_FrameStyle,
-                    ImGuiWindowFlags_NoSavedSettings
-                };
-
-                if (!current_theme_data->previewPaths.empty()) {
-                    auto img = ImageLoader::get(current_theme_data->previewPaths.front());
-                    ImGui::Image((ImTextureID)img, {426, 240});
-                    ImGui::SameLine();
-                }
-
-                {
-                    Group right_group;
-
-                    {
-                        Font font_guard{nullptr, 30};
-                        ImGui::TextWrapped(current_theme_data->uthemeMetadata.themeName);
-                        if (current_theme_data->uthemeMetadata.themeAuthor)
-                            ImGui::TextWrapped("by: " +
-                                               *current_theme_data->uthemeMetadata.themeAuthor);
-                    }
-                }
-            }
-
-            ImGui::Unindent(140);
-        }
-
+        show_current_theme();
 
         if (ImGui::Button("Download Themes"))
             NavBar::set_current_tab(NavBar::Tab::themezer);

@@ -51,7 +51,7 @@ namespace ManageThemesScreen {
     Tab current_tab = Tab::manage_installed;
 
     std::vector<std::filesystem::path> local_uthemes;
-    bool local_uthemes_need_refresh = true;
+    bool local_uthemes_needs_refresh = true;
 
     std::jthread installed_themes_scanner;
     thread_safe<std::vector<InstalledThemeMetadata>> safe_installed_themes;
@@ -70,9 +70,6 @@ namespace ManageThemesScreen {
     std::filesystem::path thumbnail_path;
 
     std::string search;
-
-    std::string current_theme_name;
-    bool current_theme_need_refresh = true;
 
     int similarity_score(std::string haystack, std::string needle) {
         haystack = as_lower_case(haystack);
@@ -147,7 +144,6 @@ namespace ManageThemesScreen {
 
     void refresh_all() {
         refresh_installed_themes();
-        refresh_current_theme();
         refresh_local_uthemes();
     }
 
@@ -155,13 +151,9 @@ namespace ManageThemesScreen {
         installed_themes_scan_state = InstalledThemesScanState::requested;
     }
 
-    void refresh_current_theme() {
-        current_theme_need_refresh = true;
-    }
-
     void refresh_local_uthemes()
     {
-        local_uthemes_need_refresh = true;
+        local_uthemes_needs_refresh = true;
     }
 
     static void text_limited(float width, const std::string& text) {
@@ -173,7 +165,6 @@ namespace ManageThemesScreen {
     }
 
     void show_installed_theme(const Installer::InstalledThemeMetadata& theme_data,
-                              bool is_active,
                               const ImVec2& inner_size,
                               const ImVec2& padding) {
         // NOTE: to create a complex button, we create a button with no text, then overlap
@@ -211,60 +202,66 @@ namespace ManageThemesScreen {
         ImGui::SetCursorPos(start_pos);
         Group grp;
 
-        if (!theme_data.previewPaths.empty()) {
+        {
+            const ImVec2 img_size = {inner_size.x, inner_size.x * 9.0f / 16.0f};
             StyleVar no_border{ImGuiStyleVar_ImageBorderSize, 0};
-            auto img = ImageLoader::get(theme_data.previewPaths.front());
-            ImVec2 img_size = {inner_size.x, inner_size.x * 9.0f / 16.0f};
+            auto img = !theme_data.previewPaths.empty()
+                ? ImageLoader::get(theme_data.previewPaths.front())
+                : ImageLoader::get("ui/theme-placeholder-no-preview.png");
             ImGui::Image((ImTextureID)img, img_size);
         }
 
-        // NOTE: Measure size for the active star, but don't place it yet, to not mess
+        bool is_shuffling = Installer::IsShuffling();
+        bool is_enabled = Installer::IsEnabled(theme_data);
+
+        // NOTE: Measure size for the active marker, but don't place it yet, to not mess
         // with the cursor position.
-        const std::string star_label = is_active ? ICON_FA_STAR : ICON_FA_STAR_O;
-        const float star_font_size = 48;
-        ImVec2 star_size;
+
+        const std::string enabled_label = is_shuffling
+            ? (is_enabled ? ICON_FA_CHECK_CIRCLE_O : ICON_FA_CIRCLE_O)
+            : (is_enabled ? ICON_FA_STAR : ICON_FA_STAR_O);
+
+        const float enabled_font_size = 48;
+        ImVec2 enabled_size;
         {
-            Font star_font{nullptr, star_font_size};
-            star_size = ImGui::CalcTextSize(star_label);
+            Font enabled_font{nullptr, enabled_font_size};
+            enabled_size = ImGui::CalcTextSize(enabled_label);
         }
 
         {
             Font font{nullptr, 24};
-            // If there's an image, make sure to limit the width, so it doesn't get
-            // covered by the star.
-            float name_width = inner_size.x;
-            if (!theme_data.previewPaths.empty())
-                name_width -= star_size.x + style.ItemSpacing.x;
+            // Make sure to limit the name width, so it doesn't get covered by the enabled
+            // icon.
+            float name_width = inner_size.x - enabled_size.x - style.ItemSpacing.x;
             text_limited(name_width, theme_data.uthemeMetadata.themeName);
         }
 
         if (theme_data.uthemeMetadata.themeAuthor) {
             Font font{nullptr, 18};
-            float author_width = inner_size.x;
-            // If there's an image, make sure to limit the width, so it doesn't get
-            // covered by the star.
-            if (!theme_data.previewPaths.empty())
-                author_width -= star_size.x + style.ItemSpacing.x;
+            // Make sure to limit the author width, so it doesn't get
+            // covered by the enabled icon.
+            float author_width = inner_size.x - enabled_size.x - style.ItemSpacing.x;
             text_limited(author_width, "by " + *theme_data.uthemeMetadata.themeAuthor);
         }
 
-        // Put active star on bottom right.
+        // Put active marker on bottom right.
         {
-            Font star_font{nullptr, star_font_size};
-            StyleColor star_color{ImGuiCol_Text, {1.0f, 0.9f, 0.0f, 1.0f}};
-            ImGui::SetCursorPos(inner_size - star_size);
-            ImGui::Text(star_label);
+            Font enabled_font{nullptr, enabled_font_size};
+            StyleColor enabled_color{ImGuiCol_Text, {1.0f, 0.9f, 0.0f, 1.0f}};
+            ImGui::SetCursorPos(inner_size - enabled_size);
+            ImGui::Text(enabled_label);
             if (clicked && ImGui::IsItemHovered()) {
                 clicked = false; // cancel the click
-                // TODO: when shuffle is implemented, this would be a toggle.
-                Installer::SetCurrentTheme(theme_data);
+                if (is_enabled)
+                    Installer::Disable(theme_data);
+                else
+                    Installer::Enable(theme_data);
                 HomeScreen::force_refresh();
-                refresh_current_theme();
             }
         }
 
         if (clicked)
-            ThemeDetailsPopup::open_local(theme_data, is_active);
+            ThemeDetailsPopup::open_local(theme_data);
     }
 
     void show_utheme(const std::filesystem::path& utheme_path) {
@@ -322,29 +319,43 @@ namespace ManageThemesScreen {
     void show_tab_manage_installed() {
         using namespace ImGui::RAII;
 
-        ImGui::AlignTextToFramePadding(); // align vertically with the InputText widget
-        ImGui::Text("Search installed theme:");
-
-        ImGui::SameLine();
+        const auto &style = ImGui::GetStyle();
 
         SDL_WiiUSetSWKBDHintText("Write some search terms...");
         SDL_WiiUSetSWKBDOKLabel("Search");
         SDL_WiiUSetSWKBDHighlightInitialText(SDL_TRUE);
 
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-        ImGui::InputTextWithHint("##local_search"s, "Search..."s, search);
+        // Let search widget expand, leaving space for the buttons.
+        const std::string shuffle_label = "Shuffle";
+        const float shuffle_width =
+            ImGui::CalcTextSize(shuffle_label).x +
+            style.ItemInnerSpacing.x +
+            ImGui::GetTextLineHeight() + // defines the size of the box
+            2 * style.FramePadding.x;
 
-        // if (ImGui::IsItemDeactivatedAfterEdit()) {
-        //     cout << "Searching: " << search << endl;
-        // }
+        const std::string enable_all_label = ICON_FA_CHECK_SQUARE_O " All";
+        const float enable_all_width =
+            ImGui::CalcTextSize(enable_all_label).x +
+            2 * style.FramePadding.x;
+
+        const std::string disable_all_label = ICON_FA_SQUARE_O " All";
+        const float disable_all_width =
+            ImGui::CalcTextSize(disable_all_label).x +
+            2 * style.FramePadding.x;
+
+        const float buttons_width =
+            shuffle_width +
+            style.ItemSpacing.x +
+            enable_all_width +
+            style.ItemSpacing.x +
+            disable_all_width;
+
+        auto available = ImGui::GetContentRegionAvail();
+        ImGui::SetNextItemWidth(available.x - style.ItemSpacing.x - buttons_width);
+        ImGui::InputTextWithHint("##local_search"s, "Search..."s, search);
 
         if (installed_themes_scan_state == InstalledThemesScanState::requested) {
             scan_installed_themes();
-        }
-
-        if (current_theme_need_refresh) {
-            current_theme_name = Installer::GetCurrentThemeName();
-            current_theme_need_refresh = false;
         }
 
         std::vector<std::size_t> visible_indexes;
@@ -372,6 +383,28 @@ namespace ManageThemesScreen {
             );
         }
 
+        ImGui::SameLine();
+
+        bool is_shuffling = Installer::IsShuffling();
+        if (ImGui::Checkbox("Shuffle", is_shuffling)) {
+            Installer::ToggleShuffling();
+        }
+
+        if (is_shuffling) {
+            ImGui::SameLine();
+            if (ImGui::Button(enable_all_label)) {
+                auto installed_themes = safe_installed_themes.lock();
+                for (auto& theme : *installed_themes)
+                    Installer::Enable(theme);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(disable_all_label)) {
+                auto installed_themes = safe_installed_themes.lock();
+                for (auto& theme : *installed_themes)
+                    Installer::Disable(theme);
+            }
+        }
+
         // To keep the search widget visible, put the search results inside
         // another child.
         if (Child search_results{"ThemeGrid"}) {
@@ -386,13 +419,10 @@ namespace ManageThemesScreen {
 
                 for (auto [counter, index] : visible_indexes | std::views::enumerate) {
                     auto& theme_data = (*installed_themes)[index];
-                    bool is_current_theme = current_theme_name == theme_data.themePath.filename();
-
                     ImVec2 grid_pos = { float(counter % 3), float(counter / 3) };
                     ImVec2 pos = grid_pos * (outer_size + spacing);
                     ImGui::SetCursorPos(grid_start_pos + pos);
                     show_installed_theme(theme_data,
-                                         is_current_theme,
                                          inner_size,
                                          padding);
                 }
@@ -407,9 +437,9 @@ namespace ManageThemesScreen {
 
         ImGui::Separator();
 
-        if (local_uthemes_need_refresh) {
+        if (local_uthemes_needs_refresh) {
             scan_local_uthemes();
-            local_uthemes_need_refresh = false;
+            local_uthemes_needs_refresh = false;
         }
 
         for (const auto& utheme_path : local_uthemes)
@@ -443,7 +473,6 @@ namespace ManageThemesScreen {
                                       {tab_width, tab_height})) {
                     current_tab = Tab::manage_installed;
                     refresh_installed_themes();
-                    refresh_current_theme();
                 }
 
                 ImGui::SameLine();

@@ -18,6 +18,7 @@ add_executable(themiify
     src/humanize.cpp
     src/installer.cpp
     src/ThemezerAPI.cpp
+    src/timer.cpp
     src/ImageLoader.cpp
     src/DownloadManager.cpp
     src/Camera.cpp
@@ -68,7 +69,7 @@ target_link_libraries(themiify PRIVATE
     quirc
     hips
     PkgConfig::zlib
-    PkgConfig::freetype2 
+    PkgConfig::freetype2
     PkgConfig::harfbuzz
     PkgConfig::libcurl
     PkgConfig::libpng
@@ -78,7 +79,7 @@ target_link_libraries(themiify PRIVATE
     PkgConfig::SDL2_mixer
 )
 
-target_compile_definitions(themiify PRIVATE THEMIIFY_VERSION="1.1")
+target_compile_definitions(themiify PRIVATE THEMIIFY_VERSION="1.1-dev")
 
 # run program using wiiload
 

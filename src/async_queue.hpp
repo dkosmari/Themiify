@@ -151,6 +151,14 @@ public:
         return result;
     }
 
+
+    void
+    clear()
+    {
+        std::lock_guard guard{mutex};
+        queue = {};
+    }
+
 }; // class async_queue
 
 #endif
