@@ -16,7 +16,7 @@ add_executable(themiify
     src/tracer.cpp
     src/utils.cpp
     src/humanize.cpp
-    src/installer.cpp
+    src/ThemeManager.cpp
     src/ThemezerAPI.cpp
     src/timer.cpp
     src/ImageLoader.cpp

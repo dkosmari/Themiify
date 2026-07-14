@@ -12,13 +12,13 @@
 #include <filesystem>
 #include <string>
 #include <SDL2/SDL.h>
-#include "../installer.h"
+#include "../ThemeManager.h"
 #include "../ThemezerAPI.h"
 
 namespace ThemeDetailsPopup {
     void open_themezer(const ThemezerAPI::WiiuThemeSmall &small_theme);
 
-    void open_local(const Installer::InstalledThemeMetadata& installed_theme_data);
+    void open_local(const ThemeManager::InstalledThemeMetadata& installed_theme_data);
 
     void process_ui();
 }

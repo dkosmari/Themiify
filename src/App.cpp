@@ -15,7 +15,7 @@
 #include "DownloadManager.h"
 #include "Camera.h"
 #include "utils.h"
-#include "installer.h"
+#include "ThemeManager.h"
 #include "timer.hpp"
 
 #include <chrono>
@@ -242,7 +242,7 @@ namespace App {
         Camera::initialize(renderer);
         Camera::open();
 
-        Installer::initialize();
+        ThemeManager::initialize();
 
         DownloadManager::initialize(user_agent);
         ImageLoader::initialize(renderer);
@@ -283,7 +283,7 @@ namespace App {
 
         NavBar::finalize();
         ContentPanel::finalize();
-        Installer::finalize();
+        ThemeManager::finalize();
         ImageLoader::finalize();
         DownloadManager::finalize();
 
@@ -323,6 +323,20 @@ namespace App {
                 cerr << "ERROR in DownloadManager::process(): " << e.what() << endl;
             }
 
+            try {
+                ImageLoader::process();
+            }
+            catch (std::exception& e) {
+                cerr << "ERROR in ImageLoader::process(): " << e.what() << endl;
+            }
+
+            try {
+                ThemeManager::process();
+            }
+            catch (std::exception& e) {
+                cerr << "ERROR in ThemeManager::process(): " << e.what() << endl;
+            }
+
             SDL_Event e;
             while(SDL_PollEvent(&e)) {
                 ImGui_ImplSDL2_ProcessEvent(&e);
@@ -354,8 +368,6 @@ namespace App {
                         break;
                 }
             }
-
-            ImageLoader::process();
 
             ImGui_ImplSDLRenderer2_NewFrame();
             ImGui_ImplSDL2_NewFrame();

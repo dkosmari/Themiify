@@ -20,7 +20,6 @@
 #include "ManageThemesScreen.h"
 #include "HomeScreen.h"
 #include "../utils.h"
-#include "../installer.h"
 #include "../thread_safe.hpp"
 #include "../IconsFontAwesome4.h"
 
@@ -48,7 +47,7 @@ namespace InstallThemePopup {
         const std::string popup_id = "Install Theme"s;
 
         std::filesystem::path utheme_path;
-        Installer::UThemeMetadata theme_data;
+        ThemeManager::UThemeMetadata theme_data;
         bool set_current = true;
 
         std::jthread install_thread;
@@ -124,7 +123,7 @@ namespace InstallThemePopup {
     } // namespace
 
     void open(const std::filesystem::path &uthemePath,
-              const Installer::UThemeMetadata &themeData,
+              const ThemeManager::UThemeMetadata &themeData,
               bool confirmationCompleted,
               bool setCurrent) {
         create_directories(THEMES_ROOT);
@@ -214,17 +213,17 @@ namespace InstallThemePopup {
             case State::start_install: {
                 state = State::installing;
                 install_thread = std::jthread([](std::stop_token stopper) {
-                    Installer::InstallTheme(stopper,
+                    ThemeManager::InstallTheme(stopper,
                                             utheme_path,
                                             theme_data,
                                             progress_handler,
                                             success_handler,
                                             error_handler);
                     if (state == State::success && set_current) {
-                        auto theme_path = Installer::GetThemePath(theme_data);
-                        Installer::InstalledThemeMetadata imeta;
-                        if (Installer::GetInstalledThemeMetadata(theme_path, imeta))
-                            Installer::Enable(imeta);
+                        auto theme_path = ThemeManager::GetThemePath(theme_data);
+                        ThemeManager::InstalledThemeMetadata imeta;
+                        if (ThemeManager::GetInstalledThemeMetadata(theme_path, imeta))
+                            ThemeManager::Enable(imeta);
                     }
                 });
 

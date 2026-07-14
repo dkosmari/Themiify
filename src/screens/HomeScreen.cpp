@@ -11,7 +11,7 @@
 #include "SettingsScreen.h"
 #include "SettingsPopup.h"
 #include "../NavBar.h"
-#include "../installer.h"
+#include "../ThemeManager.h"
 #include "../IconsFontAwesome4.h"
 #include "../ImageLoader.h"
 #include "../utils.h"
@@ -36,7 +36,7 @@ using std::endl;
 // #define DEBUG_BG_COLOR
 
 namespace HomeScreen {
-    using Installer::InstalledThemeMetadata;
+    using ThemeManager::InstalledThemeMetadata;
 
     SDL_Renderer *home_renderer = nullptr;
 
@@ -63,7 +63,7 @@ namespace HomeScreen {
     }
 
     void refresh_current_theme() {
-        current_theme = Installer::GetCurrentTheme();
+        current_theme = ThemeManager::GetCurrentTheme();
         current_theme_refresh = false;
     }
 
@@ -135,7 +135,7 @@ namespace HomeScreen {
             StyleVar no_border{ImGuiStyleVar_ImageBorderSize, 0};
 
             if (!current_theme) {
-                if (Installer::IsShuffling()) {
+                if (ThemeManager::IsShuffling()) {
                     auto img = ImageLoader::get("ui/theme-placeholder-random.png");
                     ImGui::Image((ImTextureID)img, img_size);
                     ImGui::SameLine();

@@ -22,7 +22,7 @@
 #include "../DownloadManager.h"
 #include "../humanize.hpp"
 #include "../IconsFontAwesome4.h"
-#include "../installer.h"
+#include "../ThemeManager.h"
 
 using std::cout;
 using std::endl;
@@ -184,8 +184,8 @@ namespace DownloadThemePopup {
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
 
         if (ImGui::Button(install_label, button_size)) {
-            Installer::UThemeMetadata theme_data;
-            Installer::GetUThemeMetadata(utheme_filename, theme_data);
+            ThemeManager::UThemeMetadata theme_data;
+            ThemeManager::GetUThemeMetadata(utheme_filename, theme_data);
 
             ImGui::CloseCurrentPopup();
             state = State::hidden;

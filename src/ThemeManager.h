@@ -16,7 +16,8 @@
 #include <string>
 #include <vector>
 
-namespace Installer {
+namespace ThemeManager {
+
     struct UThemeMetadata {
         std::optional<std::string> themeID;
         std::string themeName;
@@ -76,4 +77,4 @@ namespace Installer {
 
     void ReloadStyleMiiUCfg();
 
-} // namespace Installer
+} // namespace ThemeManager

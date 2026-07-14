@@ -32,7 +32,7 @@
 #include <sysapp/title.h>
 #include <coreinit/systeminfo.h>
 
-#include "installer.h"
+#include "ThemeManager.h"
 #include "utils.h"
 #include "tracer.hpp"
 #include "thread_safe.hpp"
@@ -42,7 +42,7 @@ using std::cerr;
 using std::endl;
 using namespace std::literals;
 
-namespace Installer {
+namespace ThemeManager {
 
     std::unordered_map<std::string, std::filesystem::path> regionLangMap = {
         {"UsEn", "UsEnglish/Message/AllMessage.szs"},
@@ -777,4 +777,9 @@ namespace Installer {
         }
     }
 
-} // namespace Installer
+    void process()
+    {
+        // TODO
+    }
+
+} // namespace ThemeManager

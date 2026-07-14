@@ -31,9 +31,9 @@ namespace DeleteThemePopup {
     bool popup_queued;
     const std::string popup_id = "DeleteThemePopup"s;
 
-    Installer::InstalledThemeMetadata installedThemeData;
+    ThemeManager::InstalledThemeMetadata installedThemeData;
 
-    void open(const Installer::InstalledThemeMetadata &installed_theme_data) {
+    void open(const ThemeManager::InstalledThemeMetadata &installed_theme_data) {
         popup_queued = true;
         state = State::shown;
         installedThemeData = installed_theme_data;
@@ -98,7 +98,7 @@ namespace DeleteThemePopup {
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
 
         if (ImGui::Button(delete_label, button_size)) {
-            Installer::DeleteTheme(installedThemeData);
+            ThemeManager::DeleteTheme(installedThemeData);
             ManageThemesScreen::refresh_installed_themes();
             ImGui::CloseCurrentPopup();
             state = State::hidden;

@@ -25,7 +25,7 @@
 #include "InstallThemePopup.h"
 #include "ThemeDetailsPopup.h"
 #include "DeleteThemePopup.h"
-#include "../installer.h"
+#include "../ThemeManager.h"
 #include "../utils.h"
 #include "../IconsFontAwesome4.h"
 #include "../ImageLoader.h"
@@ -41,7 +41,7 @@ using namespace std::literals;
 
 namespace ManageThemesScreen {
 
-    using Installer::InstalledThemeMetadata;
+    using ThemeManager::InstalledThemeMetadata;
 
     enum class Tab {
         manage_installed,
@@ -118,7 +118,7 @@ namespace ManageThemesScreen {
         installed_themes_scanner = std::jthread{
             [](std::stop_token stopper)
             {
-                auto themes = Installer::GetInstalledThemes(stopper);
+                auto themes = ThemeManager::GetInstalledThemes(stopper);
                 if (!stopper.stop_requested()) {
                     safe_installed_themes.store(std::move(themes));
                     installed_themes_scan_state = InstalledThemesScanState::idle;
@@ -164,7 +164,7 @@ namespace ManageThemesScreen {
         io.MousePos = old_mouse_pos;
     }
 
-    void show_installed_theme(const Installer::InstalledThemeMetadata& theme_data,
+    void show_installed_theme(const ThemeManager::InstalledThemeMetadata& theme_data,
                               const ImVec2& inner_size,
                               const ImVec2& padding) {
         // NOTE: to create a complex button, we create a button with no text, then overlap
@@ -211,8 +211,8 @@ namespace ManageThemesScreen {
             ImGui::Image((ImTextureID)img, img_size);
         }
 
-        bool is_shuffling = Installer::IsShuffling();
-        bool is_enabled = Installer::IsEnabled(theme_data);
+        bool is_shuffling = ThemeManager::IsShuffling();
+        bool is_enabled = ThemeManager::IsEnabled(theme_data);
 
         // NOTE: Measure size for the active marker, but don't place it yet, to not mess
         // with the cursor position.
@@ -253,9 +253,9 @@ namespace ManageThemesScreen {
             if (clicked && ImGui::IsItemHovered()) {
                 clicked = false; // cancel the click
                 if (is_enabled)
-                    Installer::Disable(theme_data);
+                    ThemeManager::Disable(theme_data);
                 else
-                    Installer::Enable(theme_data);
+                    ThemeManager::Enable(theme_data);
                 HomeScreen::force_refresh();
             }
         }
@@ -303,8 +303,8 @@ namespace ManageThemesScreen {
         ImGui::SetCursorPosX(text_wrap_pos + style.ItemSpacing.x);
 
         if (ImGui::Button(install_label, install_size)) {
-            Installer::UThemeMetadata theme_data;
-            Installer::GetUThemeMetadata(utheme_path, theme_data);
+            ThemeManager::UThemeMetadata theme_data;
+            ThemeManager::GetUThemeMetadata(utheme_path, theme_data);
             InstallThemePopup::open(utheme_path, theme_data, false, true);
         }
 
@@ -385,9 +385,9 @@ namespace ManageThemesScreen {
 
         ImGui::SameLine();
 
-        bool is_shuffling = Installer::IsShuffling();
+        bool is_shuffling = ThemeManager::IsShuffling();
         if (ImGui::Checkbox("Shuffle", is_shuffling)) {
-            Installer::ToggleShuffling();
+            ThemeManager::ToggleShuffling();
         }
 
         if (is_shuffling) {
@@ -395,13 +395,13 @@ namespace ManageThemesScreen {
             if (ImGui::Button(enable_all_label)) {
                 auto installed_themes = safe_installed_themes.lock();
                 for (auto& theme : *installed_themes)
-                    Installer::Enable(theme);
+                    ThemeManager::Enable(theme);
             }
             ImGui::SameLine();
             if (ImGui::Button(disable_all_label)) {
                 auto installed_themes = safe_installed_themes.lock();
                 for (auto& theme : *installed_themes)
-                    Installer::Disable(theme);
+                    ThemeManager::Disable(theme);
             }
         }
 

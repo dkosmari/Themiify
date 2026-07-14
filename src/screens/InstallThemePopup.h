@@ -10,11 +10,11 @@
 #pragma once
 
 #include <filesystem>
-#include "../installer.h"
+#include "../ThemeManager.h"
 
 namespace InstallThemePopup {
     void open(const std::filesystem::path &uthemePath,
-              const Installer::UThemeMetadata &themeData,
+              const ThemeManager::UThemeMetadata &themeData,
               bool confirmationCompleted,
               bool setCurrent);
 

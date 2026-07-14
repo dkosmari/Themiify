@@ -24,7 +24,6 @@
 #include "../App.h"
 #include "../DownloadManager.h"
 #include "../IconsFontAwesome4.h"
-#include "../installer.h"
 #include "../ImageLoader.h"
 #include "../NavBar.h"
 #include "../ThemezerAPI.h"
@@ -52,7 +51,7 @@ namespace ThemeDetailsPopup {
     std::string error;
     WiiuThemeFull fullTheme;
     WiiuThemeSmall smallTheme;
-    Installer::InstalledThemeMetadata installedThemeData;
+    ThemeManager::InstalledThemeMetadata installedThemeData;
     const std::string popup_id = "ThemeDetailsPopup"s;
 
     void open_themezer(const WiiuThemeSmall &small_theme) {
@@ -72,7 +71,7 @@ namespace ThemeDetailsPopup {
         state = State::waiting_themezer;
     }
 
-    void open_local(const Installer::InstalledThemeMetadata& installed_theme_data) {
+    void open_local(const ThemeManager::InstalledThemeMetadata& installed_theme_data) {
         popup_queued = true;
         installedThemeData = installed_theme_data;
         state = State::ready_local;
@@ -164,21 +163,21 @@ namespace ThemeDetailsPopup {
                     }
                 }
 
-                bool is_shuffling = Installer::IsShuffling();
-                bool is_enabled = Installer::IsEnabled(installedThemeData);
+                bool is_shuffling = ThemeManager::IsShuffling();
+                bool is_enabled = ThemeManager::IsEnabled(installedThemeData);
 
                 if (is_shuffling) {
                     if (ImGui::Checkbox("Enabled", is_enabled)) {
                         if (is_enabled)
-                            Installer::Enable(installedThemeData);
+                            ThemeManager::Enable(installedThemeData);
                         else
-                            Installer::Disable(installedThemeData);
+                            ThemeManager::Disable(installedThemeData);
                         HomeScreen::force_refresh();
                     }
                 } else {
                     Disabled disabled_if{is_enabled};
                     if (ImGui::Button(ICON_FA_STAR " Apply", {-1, 0})) {
-                        Installer::Enable(installedThemeData);
+                        ThemeManager::Enable(installedThemeData);
                         ImGui::CloseCurrentPopup();
                         HomeScreen::force_refresh();
                     }

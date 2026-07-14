@@ -11,10 +11,10 @@
 
 #include <filesystem>
 
-#include "../installer.h"
+#include "../ThemeManager.h"
 
 namespace DeleteThemePopup {
-    void open(const Installer::InstalledThemeMetadata &installed_theme_data);
+    void open(const ThemeManager::InstalledThemeMetadata &installed_theme_data);
 
     void process_ui();
 }
