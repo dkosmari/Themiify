@@ -14,6 +14,7 @@
 #include <optional>
 #include <stop_token>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace ThemeManager {
@@ -31,6 +32,14 @@ namespace ThemeManager {
         std::vector<std::filesystem::path> previewPaths;
         std::filesystem::path legacyMetadataPath;
         std::vector<std::filesystem::path> files;
+    };
+
+    struct StyleMiiUCfg {
+        std::unordered_set<std::string> enabledThemes = {};
+        bool mashupThemes = false;
+        bool showNotification = false;
+        bool shuffleThemes = false;
+        bool themeManagerEnabled = false;
     };
 
     using progress_function_sig = void (const std::string &msg);
@@ -76,5 +85,9 @@ namespace ThemeManager {
     void Disable(const InstalledThemeMetadata& meta);
 
     void ReloadStyleMiiUCfg();
+
+    StyleMiiUCfg* GetStyleMiiUCfg();
+
+    void DeleteStyleMiiUCfg();
 
 } // namespace ThemeManager

@@ -211,7 +211,8 @@ namespace ManageThemesScreen {
             ImGui::Image((ImTextureID)img, img_size);
         }
 
-        bool is_shuffling = ThemeManager::IsShuffling();
+        auto cfg = ThemeManager::GetStyleMiiUCfg();
+        bool is_shuffling = cfg && cfg->shuffleThemes;
         bool is_enabled = ThemeManager::IsEnabled(theme_data);
 
         // NOTE: Measure size for the active marker, but don't place it yet, to not mess
@@ -385,23 +386,25 @@ namespace ManageThemesScreen {
 
         ImGui::SameLine();
 
-        bool is_shuffling = ThemeManager::IsShuffling();
-        if (ImGui::Checkbox("Shuffle", is_shuffling)) {
-            ThemeManager::ToggleShuffling();
-        }
+        auto cfg = ThemeManager::GetStyleMiiUCfg();
+        if (cfg) {
+            bool is_shuffling = cfg->shuffleThemes;
+            if (ImGui::Checkbox("Shuffle", is_shuffling))
+                ThemeManager::ToggleShuffling();
 
-        if (is_shuffling) {
-            ImGui::SameLine();
-            if (ImGui::Button(enable_all_label)) {
-                auto installed_themes = safe_installed_themes.lock();
-                for (auto& theme : *installed_themes)
-                    ThemeManager::Enable(theme);
-            }
-            ImGui::SameLine();
-            if (ImGui::Button(disable_all_label)) {
-                auto installed_themes = safe_installed_themes.lock();
-                for (auto& theme : *installed_themes)
-                    ThemeManager::Disable(theme);
+            if (is_shuffling) {
+                ImGui::SameLine();
+                if (ImGui::Button(enable_all_label)) {
+                    auto installed_themes = safe_installed_themes.lock();
+                    for (auto& theme : *installed_themes)
+                        ThemeManager::Enable(theme);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button(disable_all_label)) {
+                    auto installed_themes = safe_installed_themes.lock();
+                    for (auto& theme : *installed_themes)
+                        ThemeManager::Disable(theme);
+                }
             }
         }
 

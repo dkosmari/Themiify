@@ -20,7 +20,6 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include <zip.h>
@@ -42,6 +41,56 @@ using std::cerr;
 using std::endl;
 using namespace std::literals;
 
+/*
+ * NOTE: customized StyleMiiUCfg serialization:
+ *
+ * - enabledThemes is converted to string for the JSON.
+ *
+ * - shuffleThemes has an alias "suffleThemes" until StyleMiiU decides to fix the config
+ *   key.
+ */
+template<>
+struct glz::meta<ThemeManager::StyleMiiUCfg> {
+
+    using T = ThemeManager::StyleMiiUCfg;
+
+    static constexpr
+    auto read_enabledThemes = [](T& self,
+                                 const std::string& arg)
+    {
+        self.enabledThemes.clear();
+        auto themes = split(arg, "|", true);
+        for (const auto& theme : themes)
+            if (!theme.empty())
+                self.enabledThemes.insert(theme);
+    };
+
+    static constexpr
+    auto write_enabledThemes = [](const T& self) -> std::string
+    {
+        std::string result;
+        if (self.shuffleThemes) {
+            // Keep them sorted on the JSON.
+            std::vector<std::string> sorted{self.enabledThemes.begin(),
+                                            self.enabledThemes.end()};
+            std::ranges::sort(sorted, {}, as_lower_case);
+            result = join(sorted, "|");
+        } else {
+            if (!self.enabledThemes.empty())
+                result = *self.enabledThemes.begin();
+        }
+        return result;
+    };
+
+    static constexpr
+    auto modify = glz::object(
+        "enabledThemes", glz::custom<read_enabledThemes, write_enabledThemes>,
+
+        "shuffleThemes", &T::shuffleThemes,
+        "suffleThemes", [](auto& self) -> auto& { return self.shuffleThemes; }
+    );
+}; // struct glz::meta<ThemeManager::StyleMiiUCfg>
+
 namespace ThemeManager {
 
     std::unordered_map<std::string, std::filesystem::path> regionLangMap = {
@@ -60,21 +109,11 @@ namespace ThemeManager {
         {"JpJa", "JpJapanese/Message/AllMessage.szs"}
     };
 
-    struct StyleMiiUCfg {
-        std::string enabledThemes = {};
-        bool mashupThemes = false;
-        bool showNotification = false;
-        bool suffleThemes = false; // NOTE the typo!
-        bool themeManagerEnabled = false;
-    };
-
     struct StyleMiiUJson {
         StyleMiiUCfg storageitems;
     };
 
-    std::optional<StyleMiiUCfg> currentStyleMiiUCfg;
-
-    std::unordered_set<std::string> enabled_themes;
+    std::optional<StyleMiiUCfg> styleMiiUCfg;
 
     using InstalledThemesList = std::vector<InstalledThemeMetadata>;
 
@@ -104,51 +143,33 @@ namespace ThemeManager {
         }
 
         static void LoadStyleMiiUCfg() {
-            currentStyleMiiUCfg.reset();
-            enabled_themes.clear();
+            styleMiiUCfg.reset();
             auto stylemiiu_cfg_path = GetStyleMiiUConfigPath();
             if (!exists(stylemiiu_cfg_path)) {
                 // If config doesn't exist yet, it's not an error.
-                currentStyleMiiUCfg.emplace();
+                styleMiiUCfg.emplace();
                 return;
             }
             StyleMiiUJson json;
             glz::ex::read_file_json(json, stylemiiu_cfg_path.string(), std::string{});
-            currentStyleMiiUCfg = std::move(json.storageitems);
-            if (currentStyleMiiUCfg->suffleThemes) {
-                auto themes = split(currentStyleMiiUCfg->enabledThemes, "|", true);
-                for (const auto& theme : themes)
-                    if (!theme.empty())
-                        enabled_themes.insert(theme);
-            } else {
-                enabled_themes.insert(currentStyleMiiUCfg->enabledThemes);
+            styleMiiUCfg = std::move(json.storageitems);
+            // Constraint: at most one theme can be enabled when not shuffling.
+            if (!styleMiiUCfg->shuffleThemes && styleMiiUCfg->enabledThemes.size() > 1) {
+                auto first = *styleMiiUCfg->enabledThemes.begin();
+                styleMiiUCfg->enabledThemes = { first };
             }
         }
 
-        static void SaveStyleMiiUCfg() {
-            if (!currentStyleMiiUCfg)
+        void SaveStyleMiiUCfg() {
+            if (!styleMiiUCfg)
                 throw std::runtime_error{"No valid StyleMiiU config state to store."};
             StyleMiiUJson json;
-            json.storageitems = *currentStyleMiiUCfg;
+            json.storageitems = *styleMiiUCfg;
             glz::ex::write_file_json<glz::opts{.prettify = true}>(
                 json,
                 GetStyleMiiUConfigPath().string(),
                 std::string{}
             );
-        }
-
-        StyleMiiUCfg&
-        GetStyleMiiUCfg()
-        {
-            try {
-                if (!currentStyleMiiUCfg)
-                    LoadStyleMiiUCfg();
-                return *currentStyleMiiUCfg;
-            }
-            catch (std::exception& e) {
-                cerr << "ERROR in GetStyleMiiUCfg(): " << e.what() << endl;
-                throw;
-            }
         }
 
         std::filesystem::path GetMenuContentPath() {
@@ -158,7 +179,10 @@ namespace ThemeManager {
             uint32_t menuIDChildDir = menuTitleID;
 
             char splitMenuID[18];
-            snprintf(splitMenuID, sizeof splitMenuID, "%08x/%08x", menuIDParentDir, menuIDChildDir);
+            snprintf(splitMenuID, sizeof splitMenuID,
+                     "%08x/%08x",
+                     menuIDParentDir,
+                     menuIDChildDir);
 
             return "storage_mlc:/sys/title" / std::filesystem::path{splitMenuID} / "content";
         }
@@ -187,6 +211,11 @@ namespace ThemeManager {
         catch (std::exception &e) {
             cerr << "ERROR: failed to save StyleMiiU config: " << e.what() << endl;
         }
+    }
+
+    void process()
+    {
+        // TODO
     }
 
     void CreateCacheFile(std::ifstream &sourceFile, const std::filesystem::path &outputPath) {
@@ -702,17 +731,26 @@ namespace ThemeManager {
     std::string
     GetCurrentThemeName()
     {
-        auto& cfg = GetStyleMiiUCfg();
-        if (enabled_themes.size() == 1)
-            return *enabled_themes.begin();
-        else
+        auto cfg = GetStyleMiiUCfg();
+        if (!cfg)
             return {};
+        if (!cfg->themeManagerEnabled)
+            return {};
+        if (cfg->enabledThemes.size() != 1)
+            return {};
+        return *cfg->enabledThemes.begin();
     }
 
     std::optional<InstalledThemeMetadata>
     GetCurrentTheme()
-    {
-        auto themeName =  GetCurrentThemeName();
+    try {
+        auto cfg = GetStyleMiiUCfg();
+        if (!cfg)
+            return {};
+        if (!cfg->themeManagerEnabled)
+            return {};
+        auto themeName = GetCurrentThemeName();
+        cout << "current theme name: \"" << themeName << "\"" << endl;
         if (themeName.empty())
             return {};
         auto themePath = THEMES_ROOT / themeName;
@@ -723,6 +761,10 @@ namespace ThemeManager {
             return {};
         return { std::move(result) };
     }
+    catch (std::exception& e) {
+        cerr << "ERROR in GetCurrentTheme(): " << e.what() << endl;
+        return {};
+    }
 
     std::filesystem::path
     GetThemePath(const UThemeMetadata& meta)
@@ -730,56 +772,68 @@ namespace ThemeManager {
         return THEMES_ROOT / make_theme_folder_name(meta.themeName, meta.themeID);
     }
 
-
     bool IsShuffling() {
-        return GetStyleMiiUCfg().suffleThemes;
+        auto cfg = GetStyleMiiUCfg();
+        if (!cfg)
+            return false;
+        return cfg->shuffleThemes;
     }
 
     void ToggleShuffling() {
-        auto &cfg = GetStyleMiiUCfg();
-        cfg.suffleThemes = !cfg.suffleThemes;
-        if (!cfg.suffleThemes) {
-            enabled_themes.clear();
-            cfg.enabledThemes.clear();
-        }
+        auto cfg = GetStyleMiiUCfg();
+        if (!cfg)
+            return;
+        cfg->shuffleThemes = !cfg->shuffleThemes;
+        if (!cfg->shuffleThemes)
+            cfg->enabledThemes.clear();
     }
 
     bool IsEnabled(const InstalledThemeMetadata& meta) {
-        return enabled_themes.contains(meta.themePath.filename());
+        auto cfg = GetStyleMiiUCfg();
+        if (!cfg)
+            return false;
+        auto theme_str = meta.themePath.filename().string();
+        return cfg->enabledThemes.contains(theme_str);
     }
 
     void Enable(const InstalledThemeMetadata& meta) {
-        auto& cfg = GetStyleMiiUCfg();
-        if (cfg.suffleThemes) {
-            enabled_themes.insert(meta.themePath.filename());
-            cfg.enabledThemes.clear();
-            for (const auto& theme : enabled_themes)
-                cfg.enabledThemes += theme + "|";
-        } else {
-            enabled_themes.clear();
-            auto theme_str = meta.themePath.filename().string();
-            enabled_themes.insert(theme_str);
-            cfg.enabledThemes = theme_str;
-        }
+        auto cfg = GetStyleMiiUCfg();
+        if (!cfg)
+            return;
+        auto theme_str = meta.themePath.filename().string();
+        if (!cfg->shuffleThemes)
+            cfg->enabledThemes.clear();
+        cfg->enabledThemes.insert(theme_str);
     }
 
     void Disable(const InstalledThemeMetadata& meta) {
-        auto& cfg = GetStyleMiiUCfg();
+        auto cfg = GetStyleMiiUCfg();
+        if (!cfg)
+            return;
         auto theme_str = meta.themePath.filename().string();
-        if (cfg.suffleThemes) {
-            enabled_themes.erase(theme_str);
-            cfg.enabledThemes.clear();
-            for (const auto& theme : enabled_themes)
-                cfg.enabledThemes += theme + "|";
-        } else {
-            if (enabled_themes.erase(theme_str))
-                cfg.enabledThemes.clear();
-        }
+        cfg->enabledThemes.erase(theme_str);
     }
 
-    void process()
+    StyleMiiUCfg*
+    GetStyleMiiUCfg()
     {
-        // TODO
+        if (!styleMiiUCfg)
+            return nullptr;
+        return &*styleMiiUCfg;
+    }
+
+    void
+    DeleteStyleMiiUCfg()
+    {
+        try {
+            auto cfg_path = GetStyleMiiUConfigPath();
+            if (exists(cfg_path))
+                remove(cfg_path);
+            styleMiiUCfg.emplace();
+        }
+        catch (std::exception& e) {
+            cerr << "ERROR in DeleteStyleMiiUCfg(): " << e.what() << endl;
+        }
     }
 
 } // namespace ThemeManager

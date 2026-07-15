@@ -135,7 +135,8 @@ namespace HomeScreen {
             StyleVar no_border{ImGuiStyleVar_ImageBorderSize, 0};
 
             if (!current_theme) {
-                if (ThemeManager::IsShuffling()) {
+                auto cfg = ThemeManager::GetStyleMiiUCfg();
+                if (cfg && cfg->shuffleThemes) {
                     auto img = ImageLoader::get("ui/theme-placeholder-random.png");
                     ImGui::Image((ImTextureID)img, img_size);
                     ImGui::SameLine();

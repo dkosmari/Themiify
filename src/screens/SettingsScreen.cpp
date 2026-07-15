@@ -9,6 +9,7 @@
 
 #include "SettingsScreen.h"
 #include "SettingsPopup.h"
+#include "../ThemeManager.h"
 #include "../utils.h"
 
 #include <iostream>
@@ -150,9 +151,9 @@ namespace SettingsScreen {
             ImGui::Text(text);
         }
 
-        ImGui::Separator();
+        ImGui::SeparatorText("Special files");
 
-        ImGui::Spacing();
+        // ImGui::Spacing();
 
         if (ImGui::Button("Check integrity of Wii U Menu files")) {
             SettingsPopup::open(SettingsPopup::OpenState::integrity);
@@ -165,22 +166,19 @@ namespace SettingsScreen {
             save_settings();
         }
 
-        ImGui::Spacing();
+        // ImGui::Spacing();
 
         if (ImGui::Button("Dump Wii U Menu files")) {
             SettingsPopup::open(SettingsPopup::OpenState::dump);
         }
 
-        ImGui::Spacing();
+        // ImGui::Spacing();
 
         if (ImGui::Button("Clear Themiify cache")) {
             SettingsPopup::open(SettingsPopup::OpenState::cache);
         }
 
-
-        ImGui::Spacing();
-
-        ImGui::Separator();
+        ImGui::SeparatorText("Sound options");
 
         ImGui::Text("Background music volume level:");
         if (ImGui::SliderInt("##volume", &volume, 0, 100, "%d%%")) {
@@ -190,6 +188,33 @@ namespace SettingsScreen {
             Mix_VolumeMusic(mix_volume);
 
             save_settings();
+        }
+
+
+        ImGui::SeparatorText("StyleMiiU options");
+
+        if (auto cfg= ThemeManager::GetStyleMiiUCfg()) {
+
+            ImGui::Checkbox("Enable StyleMiiU plugin", cfg->themeManagerEnabled);
+            ImGui::SetItemTooltip("Set \"themeManagerEnabled\"");
+
+            bool shuffle_value = cfg->shuffleThemes;
+            if (ImGui::Checkbox("Shuffle themes", shuffle_value))
+                ThemeManager::ToggleShuffling();
+            ImGui::SetItemTooltip("Set \"suffleThemes\""); // NOTE: typo
+
+            ImGui::Checkbox("Mash up themes", cfg->mashupThemes);
+            ImGui::SetItemTooltip("Set \"mashupThemes\"");
+
+            ImGui::Checkbox("Show notifications", cfg->showNotification);
+            ImGui::SetItemTooltip("Set \"showNotification\"");
+
+        } else {
+            ImGui::TextWrapped("Could not parse StyleMiiU configuration.");
+        }
+
+        if (ImGui::Button("Delete style-mii-u.json")) {
+            ThemeManager::DeleteStyleMiiUCfg();
         }
 
         SettingsPopup::process_ui();

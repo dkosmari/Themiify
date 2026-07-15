@@ -163,10 +163,10 @@ namespace ThemeDetailsPopup {
                     }
                 }
 
-                bool is_shuffling = ThemeManager::IsShuffling();
+                auto cfg = ThemeManager::GetStyleMiiUCfg();
                 bool is_enabled = ThemeManager::IsEnabled(installedThemeData);
 
-                if (is_shuffling) {
+                if (cfg && cfg->shuffleThemes) {
                     if (ImGui::Checkbox("Enabled", is_enabled)) {
                         if (is_enabled)
                             ThemeManager::Enable(installedThemeData);
@@ -175,7 +175,8 @@ namespace ThemeDetailsPopup {
                         HomeScreen::force_refresh();
                     }
                 } else {
-                    Disabled disabled_if{is_enabled};
+                    // Disable if there's no config, or is already enabled.
+                    Disabled disabled_if{!cfg || is_enabled};
                     if (ImGui::Button(ICON_FA_STAR " Apply", {-1, 0})) {
                         ThemeManager::Enable(installedThemeData);
                         ImGui::CloseCurrentPopup();
