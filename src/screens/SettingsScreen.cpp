@@ -9,6 +9,7 @@
 
 #include "SettingsScreen.h"
 #include "SettingsPopup.h"
+#include "../NavBar.h"
 #include "../ThemeManager.h"
 #include "../utils.h"
 
@@ -195,7 +196,7 @@ namespace SettingsScreen {
 
         if (auto cfg= ThemeManager::GetStyleMiiUCfg()) {
 
-            ImGui::Checkbox("Enable StyleMiiU plugin", cfg->themeManagerEnabled);
+            ImGui::Checkbox("Enable plugin", cfg->themeManagerEnabled);
             ImGui::SetItemTooltip("Set \"themeManagerEnabled\"");
 
             bool shuffle_value = cfg->shuffleThemes;
@@ -208,6 +209,10 @@ namespace SettingsScreen {
 
             ImGui::Checkbox("Show notifications", cfg->showNotification);
             ImGui::SetItemTooltip("Set \"showNotification\"");
+
+            if (ImGui::Button("Change enabled themes..."))
+                NavBar::set_current_tab(NavBar::Tab::manage_themes);
+            ImGui::SetItemTooltip("Set \"enabledThemes\"");
 
         } else {
             ImGui::TextWrapped("Could not parse StyleMiiU configuration.");
