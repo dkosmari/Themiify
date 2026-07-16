@@ -51,6 +51,10 @@ namespace ThemeManager {
     using error_function_sig = void (const std::exception &e);
     using error_function_t = std::function<error_function_sig>;
 
+    using InstalledThemeCallbackSignature = void (std::size_t index,
+                                                  const InstalledThemeMetadata& meta);
+    using InstalledThemeFunction = std::function<InstalledThemeCallbackSignature>;
+
     void initialize();
     void finalize();
 
@@ -70,7 +74,7 @@ namespace ThemeManager {
                       progress_function_t progressCallback,
                       success_function_t successCallback,
                       error_function_t errorCallback);
-    void DeleteTheme(const InstalledThemeMetadata& meta);
+    void UninstallTheme(const InstalledThemeMetadata& meta);
 
     std::string GetCurrentThemeName();
     std::optional<InstalledThemeMetadata> GetCurrentTheme();
@@ -89,5 +93,11 @@ namespace ThemeManager {
     StyleMiiUCfg* GetStyleMiiUCfg();
 
     void DeleteStyleMiiUCfg();
+
+    void RefreshInstalledThemes();
+
+    bool IsRefreshingThemes();
+
+    void ForEachInstalledTheme(const InstalledThemeFunction& func);
 
 } // namespace ThemeManager

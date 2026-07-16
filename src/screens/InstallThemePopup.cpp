@@ -2,7 +2,7 @@
  * Themiify - A theme manager for the Nintendo Wii U
  * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
- * Copyright (C) 2026  Daniel K. O. <dkosmari>
+ * Copyright (C) 2026 Daniel K. O. <dkosmari>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -145,6 +145,146 @@ namespace InstallThemePopup {
         error_message.lock()->clear();
     }
 
+    void show_state_confirmation() {
+        const auto &style = ImGui::GetStyle();
+
+        ImGui::TextWrapped("Would you like to install the theme:\n%s ?",
+                           theme_data.themeName.c_str());
+
+        ImGui::Checkbox("Set as current theme after installation", &set_current);
+
+        ImVec2 button_size{180, 0};
+
+        float spacing = style.ItemSpacing.x;
+        float total_width = button_size.x * 2.0f + spacing;
+
+        float start_x = (ImGui::GetContentRegionAvail().x - total_width) * 0.5f;
+
+        if (start_x > 0.0f)
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
+
+        if (ImGui::Button(ICON_FA_COGS " Install", button_size)) {
+            state = State::start_install;
+        }
+        ImGui::SetItemDefaultFocus();
+
+        ImGui::SameLine();
+
+        if (ImGui::Button(ICON_FA_TIMES " Cancel", button_size)) {
+            ImGui::CloseCurrentPopup();
+            state = State::hidden;
+        }
+    }
+
+    void show_state_start_install() {
+        state = State::installing;
+        install_thread = std::jthread([](std::stop_token stopper) {
+            ThemeManager::InstallTheme(stopper,
+                                       utheme_path,
+                                       theme_data,
+                                       progress_handler,
+                                       success_handler,
+                                       error_handler);
+            if (state == State::success && set_current) {
+                auto theme_path = ThemeManager::GetThemePath(theme_data);
+                ThemeManager::InstalledThemeMetadata imeta;
+                if (ThemeManager::GetInstalledThemeMetadata(theme_path, imeta))
+                    ThemeManager::Enable(imeta);
+            }
+        });
+    }
+
+    void show_state_installing() {
+        using namespace ImGui::RAII;
+
+        // Dummy to have nicer window width here
+        ImGui::SetCursorPosX(800.0f);
+        ImGui::Dummy({0.0f, 0.0f});
+        {
+            Font title_font{nullptr, 40};
+            ImGui::TextWrapped("Installing %s...", theme_data.themeName.c_str());
+        }
+
+        ImGui::Separator();
+
+        ImGui::TextWrapped("This may take time, do not turn off your Wii U.");
+
+        show_messages();
+
+        ImVec2 button_size{180, 0};
+        float button_x = (ImGui::GetContentRegionAvail().x - button_size.x) * 0.5f;
+        if (button_x > 0.0f)
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + button_x);
+        if (ImGui::Button("Cancel", button_size))
+            install_thread = {};
+    }
+
+    void show_state_error() {
+        using namespace ImGui::RAII;
+
+        {
+            Font title_font{nullptr, 50};
+            ImGui::Text("Installation failed!");
+        }
+
+        show_messages();
+
+        ImVec2 button_size{180, 0};
+
+        float start_x =
+            (ImGui::GetContentRegionAvail().x - button_size.x) * 0.5f;
+
+        if (start_x > 0.0f)
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
+
+        if (ImGui::Button("Close", button_size)) {
+            ImGui::CloseCurrentPopup();
+            state = State::hidden;
+        }
+    }
+
+    void show_state_success() {
+        using namespace ImGui::RAII;
+
+        const auto &style = ImGui::GetStyle();
+
+        {
+            Font title_font{nullptr, 50};
+            ImGui::Text("Installation successful!");
+        }
+
+        ImGui::TextWrapped(std::format("This file is not needed anymore:\n\"{}\".",
+                                       utheme_path.filename().string()));
+        ImGui::TextWrapped("Would you like to delete it?");
+
+        ImVec2 button_size{180, 0};
+
+        float total_width = 2 * button_size.x + style.ItemSpacing.x;
+
+        float start_x = (ImGui::GetContentRegionAvail().x - total_width) / 2;
+
+        if (start_x > 0.0f)
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
+
+        if (ImGui::Button("Delete", button_size)) {
+            DeletePath(utheme_path);
+            ImGui::CloseCurrentPopup();
+            state = State::hidden;
+            ManageThemesScreen::refresh_local_uthemes();
+            HomeScreen::force_refresh();
+        }
+        ImGui::SetItemDefaultFocus();
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Keep", button_size)) {
+            ImGui::CloseCurrentPopup();
+            state = State::hidden;
+            ManageThemesScreen::refresh_local_uthemes();
+            HomeScreen::force_refresh();
+        }
+    }
+
     void process_ui() {
         using namespace ImGui::RAII;
         if (state == State::hidden)
@@ -176,149 +316,29 @@ namespace InstallThemePopup {
             return;
         }
 
-        const auto &style = ImGui::GetStyle();
-
         switch (state) {
-            case State::confirmation: {
-
-                ImGui::TextWrapped("Would you like to install the theme:\n%s ?",
-                                   theme_data.themeName.c_str());
-
-                ImGui::Checkbox("Set as current theme after installation", &set_current);
-
-                ImVec2 button_size{180, 0};
-
-                float spacing = style.ItemSpacing.x;
-                float total_width = button_size.x * 2.0f + spacing;
-
-                float start_x = (ImGui::GetContentRegionAvail().x - total_width) * 0.5f;
-
-                if (start_x > 0.0f)
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-                if (ImGui::Button(ICON_FA_COGS " Install", button_size)) {
-                    state = State::start_install;
-                }
-                ImGui::SetItemDefaultFocus();
-
-                ImGui::SameLine();
-
-                if (ImGui::Button(ICON_FA_TIMES " Cancel", button_size)) {
-                    ImGui::CloseCurrentPopup();
-                    state = State::hidden;
-                }
-
+            case State::confirmation:
+                show_state_confirmation();
                 break;
-            }
-            case State::start_install: {
-                state = State::installing;
-                install_thread = std::jthread([](std::stop_token stopper) {
-                    ThemeManager::InstallTheme(stopper,
-                                            utheme_path,
-                                            theme_data,
-                                            progress_handler,
-                                            success_handler,
-                                            error_handler);
-                    if (state == State::success && set_current) {
-                        auto theme_path = ThemeManager::GetThemePath(theme_data);
-                        ThemeManager::InstalledThemeMetadata imeta;
-                        if (ThemeManager::GetInstalledThemeMetadata(theme_path, imeta))
-                            ThemeManager::Enable(imeta);
-                    }
-                });
 
+            case State::start_install:
+                show_state_start_install();
                 break;
-            }
-            case State::installing: {
-                // Dummy to have nicer window width here
-                ImGui::SetCursorPosX(800.0f);
-                ImGui::Dummy({0.0f, 0.0f});
-                {
-                    Font title_font{nullptr, 40};
-                    ImGui::TextWrapped("Installing %s...", theme_data.themeName.c_str());
-                }
 
-                ImGui::Separator();
-
-                ImGui::TextWrapped("This may take time, do not turn off your Wii U.");
-
-                show_messages();
-
-                ImVec2 button_size{180, 0};
-                float button_x = (ImGui::GetContentRegionAvail().x - button_size.x) * 0.5f;
-                if (button_x > 0.0f)
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + button_x);
-                if (ImGui::Button("Cancel", button_size))
-                    install_thread = {};
-
+            case State::installing:
+                show_state_installing();
                 break;
-            }
-            case State::error: {
-                {
-                    Font title_font{nullptr, 50};
-                    ImGui::Text("Installation failed!");
-                }
 
-                show_messages();
-
-                ImVec2 button_size{180, 0};
-
-                float start_x =
-                    (ImGui::GetContentRegionAvail().x - button_size.x) * 0.5f;
-
-                if (start_x > 0.0f)
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-                if (ImGui::Button("Close", button_size)) {
-                    ImGui::CloseCurrentPopup();
-                    state = State::hidden;
-                }
-
+            case State::error:
+                show_state_error();
                 break;
-            }
-            case State::success: {
-                {
-                    Font title_font{nullptr, 50};
-                    ImGui::Text("Installation successful!");
-                }
 
-                ImGui::TextWrapped(std::format("This file is not needed anymore:\n\"{}\".",
-                                               utheme_path.filename().string()));
-                ImGui::TextWrapped("Would you like to delete it?");
-
-                ImVec2 button_size{180, 0};
-
-                float spacing = style.ItemSpacing.x;
-                float total_width = button_size.x * 2.0f + spacing;
-
-                float start_x = (ImGui::GetContentRegionAvail().x - total_width) * 0.5f;
-
-                if (start_x > 0.0f)
-                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-                if (ImGui::Button("Delete", button_size)) {
-                    DeletePath(utheme_path);
-                    ImGui::CloseCurrentPopup();
-                    state = State::hidden;
-                    ManageThemesScreen::refresh_all();
-                    HomeScreen::force_refresh();
-                }
-                ImGui::SetItemDefaultFocus();
-
-                ImGui::SameLine();
-
-                if (ImGui::Button("Keep", button_size)) {
-                    ImGui::CloseCurrentPopup();
-                    state = State::hidden;
-                    ManageThemesScreen::refresh_all();
-                    HomeScreen::force_refresh();
-                }
-
+            case State::success:
+                show_state_success();
                 break;
-            }
+
             default:
-                break;
+                ;
         }
-
     }
 }

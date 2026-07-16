@@ -4,6 +4,7 @@
 #include <ranges>
 #include <string_view>
 #include <tuple>
+#include <locale>
 
 #include <sys/iosupport.h>
 
@@ -129,6 +130,33 @@ as_lower_case(const std::string& input)
     for (char &c : output)
         c = std::tolower(static_cast<unsigned char>(c));
     return output;
+}
+
+bool
+IgnoreCaseLess::operator ()(const std::string& a,
+                            const std::string& b)
+    const noexcept
+{
+    auto& c_locale = std::locale::classic();
+    for (auto [ca, cb] : std::views::zip(a, b)) {
+        auto low_ca = std::tolower(ca, c_locale);
+        auto low_cb = std::tolower(cb, c_locale);
+        if (low_ca < low_cb)
+            return true;
+        if (low_ca > low_cb)
+            return false;
+    }
+    if (a.size() < b.size())
+        return true;
+    return false;
+}
+
+bool
+IgnoreCaseLess::operator ()(const std::filesystem::path& a,
+                            const std::filesystem::path& b)
+    const noexcept
+{
+    return operator()(a.string(), b.string());
 }
 
 std::filesystem::path

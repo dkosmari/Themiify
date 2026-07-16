@@ -2,17 +2,15 @@
  * Themiify - A theme manager for the Nintendo Wii U
  * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
- * Copyright (C) 2026  Daniel K. O. <dkosmari>
+ * Copyright (C) 2026 Daniel K. O. <dkosmari>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #include <algorithm>
-#include <atomic>
 #include <iostream>
 #include <optional>
 #include <ranges>
-#include <thread>
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
@@ -30,7 +28,6 @@
 #include "../IconsFontAwesome4.h"
 #include "../ImageLoader.h"
 #include "../tracer.hpp"
-#include "../thread_safe.hpp"
 
 // Define this to help seeing the padding and spacing values for windows.
 // #define DEBUG_BG_COLOR
@@ -53,17 +50,7 @@ namespace ManageThemesScreen {
     std::vector<std::filesystem::path> local_uthemes;
     bool local_uthemes_needs_refresh = true;
 
-    std::jthread installed_themes_scanner;
-    thread_safe<std::vector<InstalledThemeMetadata>> safe_installed_themes;
-
-    enum class InstalledThemesScanState {
-        idle,
-        requested,
-        scanning,
-    };
-    std::atomic<InstalledThemesScanState> installed_themes_scan_state{
-        InstalledThemesScanState::requested
-    };
+    std::vector<InstalledThemeMetadata> installed_themes;
 
     SDL_Renderer *manage_renderer;
 
@@ -71,9 +58,9 @@ namespace ManageThemesScreen {
 
     std::string search;
 
-    int similarity_score(std::string haystack, std::string needle) {
-        haystack = as_lower_case(haystack);
-        needle = as_lower_case(needle);
+    int similarity_score(const std::string& haystack_, const std::string& needle_) {
+        auto haystack = as_lower_case(haystack_);
+        auto needle = as_lower_case(needle_);
 
         if (needle.empty())
             return 0;
@@ -113,42 +100,17 @@ namespace ManageThemesScreen {
         std::ranges::sort(local_uthemes, {}, as_lower_case);
     }
 
-    void scan_installed_themes() {
-        installed_themes_scan_state = InstalledThemesScanState::scanning;
-        installed_themes_scanner = std::jthread{
-            [](std::stop_token stopper)
-            {
-                auto themes = ThemeManager::GetInstalledThemes(stopper);
-                if (!stopper.stop_requested()) {
-                    safe_installed_themes.store(std::move(themes));
-                    installed_themes_scan_state = InstalledThemesScanState::idle;
-                }
-            }
-        };
-    }
-
     void initialize(SDL_Renderer *renderer) {
         TRACE_FUNC;
         create_directories(THEMES_ROOT);
         create_directories(THEMIIFY_INSTALLED_THEMES);
         manage_renderer = renderer;
-        installed_themes_scanner = {};
-        safe_installed_themes.lock()->clear();
+        installed_themes.clear();
     }
 
     void finalize() {
         TRACE_FUNC;
-        installed_themes_scanner = {};
-        safe_installed_themes.lock()->clear();
-    }
-
-    void refresh_all() {
-        refresh_installed_themes();
-        refresh_local_uthemes();
-    }
-
-    void refresh_installed_themes() {
-        installed_themes_scan_state = InstalledThemesScanState::requested;
+        installed_themes.clear();
     }
 
     void refresh_local_uthemes()
@@ -327,6 +289,12 @@ namespace ManageThemesScreen {
         SDL_WiiUSetSWKBDHighlightInitialText(SDL_TRUE);
 
         // Let search widget expand, leaving space for the buttons.
+
+        const std::string refresh_label = ICON_FA_REFRESH;
+        const float refresh_width =
+            ImGui::CalcTextSize(refresh_label).x +
+            2 * style.FramePadding.x;
+
         const std::string shuffle_label = "Shuffle";
         const float shuffle_width =
             ImGui::CalcTextSize(shuffle_label).x +
@@ -345,6 +313,8 @@ namespace ManageThemesScreen {
             2 * style.FramePadding.x;
 
         const float buttons_width =
+            refresh_width +
+            style.ItemInnerSpacing.x +
             shuffle_width +
             style.ItemSpacing.x +
             enable_all_width +
@@ -355,16 +325,18 @@ namespace ManageThemesScreen {
         ImGui::SetNextItemWidth(available.x - style.ItemSpacing.x - buttons_width);
         ImGui::InputTextWithHint("##local_search"s, "Search..."s, search);
 
-        if (installed_themes_scan_state == InstalledThemesScanState::requested) {
-            scan_installed_themes();
-        }
-
         std::vector<std::size_t> visible_indexes;
 
-        auto installed_themes = safe_installed_themes.lock();
-
-        for (std::size_t i = 0; i < installed_themes->size(); ++i) {
-            int score = similarity_score((*installed_themes)[i].uthemeMetadata.themeName,
+        installed_themes.clear();
+        ThemeManager::ForEachInstalledTheme(
+            [](std::size_t /*index*/,
+               const InstalledThemeMetadata& meta)
+            {
+                installed_themes.push_back(meta);
+            }
+        );
+        for (std::size_t i = 0; i < installed_themes.size(); ++i) {
+            int score = similarity_score(installed_themes[i].uthemeMetadata.themeName,
                                          search);
 
             if (search.empty() || score >= 0)
@@ -375,13 +347,21 @@ namespace ManageThemesScreen {
             std::ranges::sort(
                 visible_indexes,
                 [&](std::size_t a, std::size_t b) {
-                    const auto& ta = (*installed_themes)[a];
-                    const auto& tb = (*installed_themes)[b];
+                    const auto& ta = installed_themes[a];
+                    const auto& tb = installed_themes[b];
                     auto sa = similarity_score(ta.uthemeMetadata.themeName, search);
                     auto sb = similarity_score(tb.uthemeMetadata.themeName, search);
                     return sa > sb;
                 }
             );
+        }
+
+        ImGui::SameLine();
+
+        {
+            Disabled if_refreshing{ThemeManager::IsRefreshingThemes()};
+            if (ImGui::Button(refresh_label))
+                ThemeManager::RefreshInstalledThemes();
         }
 
         ImGui::SameLine();
@@ -395,15 +375,23 @@ namespace ManageThemesScreen {
             if (is_shuffling) {
                 ImGui::SameLine();
                 if (ImGui::Button(enable_all_label)) {
-                    auto installed_themes = safe_installed_themes.lock();
-                    for (auto& theme : *installed_themes)
-                        ThemeManager::Enable(theme);
+                    ThemeManager::ForEachInstalledTheme(
+                        [](std::size_t,
+                           const InstalledThemeMetadata& theme)
+                        {
+                            ThemeManager::Enable(theme);
+                        }
+                    );
                 }
                 ImGui::SameLine();
                 if (ImGui::Button(disable_all_label)) {
-                    auto installed_themes = safe_installed_themes.lock();
-                    for (auto& theme : *installed_themes)
-                        ThemeManager::Disable(theme);
+                    ThemeManager::ForEachInstalledTheme(
+                        [](std::size_t,
+                           const InstalledThemeMetadata& theme)
+                        {
+                            ThemeManager::Disable(theme);
+                        }
+                    );
                 }
             }
         }
@@ -412,25 +400,22 @@ namespace ManageThemesScreen {
         // another child.
         if (Child search_results{"ThemeGrid"}) {
 
-            if (installed_themes_scan_state == InstalledThemesScanState::idle) {
+            Disabled if_refreshing{ThemeManager::IsRefreshingThemes()};
 
-                const ImVec2 grid_start_pos = ImGui::GetCursorPos();
-                const ImVec2 inner_size = {320, 260};
-                const ImVec2 padding = {12, 12};
-                const ImVec2 outer_size = inner_size + 2 * padding;
-                const ImVec2 spacing = {18, 18};
+            const ImVec2 grid_start_pos = ImGui::GetCursorPos();
+            const ImVec2 inner_size = {320, 260};
+            const ImVec2 padding = {12, 12};
+            const ImVec2 outer_size = inner_size + 2 * padding;
+            const ImVec2 spacing = {18, 18};
 
-                for (auto [counter, index] : visible_indexes | std::views::enumerate) {
-                    auto& theme_data = (*installed_themes)[index];
-                    ImVec2 grid_pos = { float(counter % 3), float(counter / 3) };
-                    ImVec2 pos = grid_pos * (outer_size + spacing);
-                    ImGui::SetCursorPos(grid_start_pos + pos);
-                    show_installed_theme(theme_data,
-                                         inner_size,
-                                         padding);
-                }
-            } else {
-                ImGui::Text("Scanning installed themes...");
+            for (auto [counter, index] : visible_indexes | std::views::enumerate) {
+                auto& theme = installed_themes[index];
+                ImVec2 grid_pos = { float(counter % 3), float(counter / 3) };
+                ImVec2 pos = grid_pos * (outer_size + spacing);
+                ImGui::SetCursorPos(grid_start_pos + pos);
+                show_installed_theme(theme,
+                                     inner_size,
+                                     padding);
             }
         }
     }
@@ -475,7 +460,6 @@ namespace ManageThemesScreen {
                                       0,
                                       {tab_width, tab_height})) {
                     current_tab = Tab::manage_installed;
-                    refresh_installed_themes();
                 }
 
                 ImGui::SameLine();

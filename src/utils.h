@@ -49,6 +49,20 @@ sanitize(const std::filesystem::path& input);
 std::string
 as_lower_case(const std::string& input);
 
+struct IgnoreCaseLess {
+
+    bool
+    operator ()(const std::string& a,
+                const std::string& b)
+        const noexcept;
+
+    bool
+    operator ()(const std::filesystem::path& a,
+                const std::filesystem::path& b)
+        const noexcept;
+
+}; // struct IgnoreCaseLess
+
 std::filesystem::path
 theme_id_to_cached_thumbnail_path(const std::string& themeID);
 
@@ -61,8 +75,6 @@ make_theme_id_filename(const std::string& themeID);
 std::filesystem::path
 make_theme_folder_name(const std::string& name,
                        const std::optional<std::string>& themeID);
-
-
 
 [[nodiscard]]
 std::vector<std::string>

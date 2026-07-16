@@ -7,13 +7,16 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+#include <atomic>
 #include <algorithm>
 #include <array>
 #include <cstdio>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <future>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <print>
 #include <sstream>
@@ -21,20 +24,23 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <ranges>
+#include <thread>
 
-#include <zip.h>
-#include <glaze/json.hpp>
 #include <glaze/exceptions/json_exceptions.hpp>
+#include <glaze/json.hpp>
 #include <hips.hpp>
 #include <mocha/mocha.h>
+#include <zip.h>
 
-#include <sysapp/title.h>
 #include <coreinit/systeminfo.h>
+#include <sysapp/title.h>
 
 #include "ThemeManager.h"
-#include "utils.h"
-#include "tracer.hpp"
+
 #include "thread_safe.hpp"
+#include "tracer.hpp"
+#include "utils.h"
 
 using std::cout;
 using std::cerr;
@@ -89,6 +95,7 @@ struct glz::meta<ThemeManager::StyleMiiUCfg> {
         "shuffleThemes", &T::shuffleThemes,
         "suffleThemes", [](auto& self) -> auto& { return self.shuffleThemes; }
     );
+
 }; // struct glz::meta<ThemeManager::StyleMiiUCfg>
 
 namespace ThemeManager {
@@ -115,9 +122,21 @@ namespace ThemeManager {
 
     std::optional<StyleMiiUCfg> styleMiiUCfg;
 
-    using InstalledThemesList = std::vector<InstalledThemeMetadata>;
+    using InstalledThemes = std::map<std::filesystem::path,
+                                     InstalledThemeMetadata,
+                                     IgnoreCaseLess>;
 
-    thread_safe<InstalledThemesList> safe_themes_list;
+    thread_safe<InstalledThemes> safe_installed_themes;
+
+    enum class RefreshThemesState : unsigned {
+        idle,
+        working,
+    };
+
+    std::atomic<RefreshThemesState> refresh_themes_state{RefreshThemesState::idle};
+
+    std::jthread refresh_themes_thread;
+
 
     namespace {
 
@@ -200,6 +219,11 @@ namespace ThemeManager {
         catch (std::exception &e) {
             cerr << "ERROR: failed to load StyleMiiU config: " << e.what() << endl;
         }
+
+        refresh_themes_thread = {};
+        refresh_themes_state = RefreshThemesState::idle;
+
+        RefreshInstalledThemes();
     }
 
     void finalize()
@@ -211,6 +235,8 @@ namespace ThemeManager {
         catch (std::exception &e) {
             cerr << "ERROR: failed to save StyleMiiU config: " << e.what() << endl;
         }
+
+        refresh_themes_thread = {};
     }
 
     void process()
@@ -689,6 +715,13 @@ namespace ThemeManager {
 
             throwIfStopped();
 
+            InstalledThemeMetadata imeta;
+            if (GetInstalledThemeMetadata(themePath, imeta))
+                safe_installed_themes.lock()
+                    ->emplace(imeta.themePath.filename(), imeta);
+            else
+                throw std::runtime_error{"Could not read metadata from installed theme!"};
+
             OSEnableHomeButtonMenu(TRUE);
 
             if (successCallback)
@@ -710,7 +743,14 @@ namespace ThemeManager {
         }
     }
 
-    void DeleteTheme(const InstalledThemeMetadata& meta) {
+    void UninstallTheme(const InstalledThemeMetadata& meta_) {
+        auto meta = meta_; // make sure a copy is preserved.
+
+        Disable(meta);
+
+        safe_installed_themes.lock()
+            ->erase(meta.themePath.filename());
+
         // If there's a cached thumbnail, delete it.
         if (meta.uthemeMetadata.themeID) {
             auto thumbnail = theme_id_to_cached_thumbnail_path(*meta.uthemeMetadata.themeID);
@@ -834,6 +874,48 @@ namespace ThemeManager {
         catch (std::exception& e) {
             cerr << "ERROR in DeleteStyleMiiUCfg(): " << e.what() << endl;
         }
+    }
+
+    void
+    RefreshInstalledThemes()
+    {
+        refresh_themes_state = RefreshThemesState::working;
+        safe_installed_themes.lock()->clear();
+        refresh_themes_thread = std::jthread{
+            [](std::stop_token stopper)
+            {
+                try {
+                    for (auto& entry : std::filesystem::directory_iterator{THEMES_ROOT}) {
+                        if (stopper.stop_requested())
+                            break;
+                        if (!entry.is_directory())
+                            continue;
+                        InstalledThemeMetadata meta;
+                        if (GetInstalledThemeMetadata(entry.path(), meta))
+                            safe_installed_themes.lock()->emplace(entry.path().filename(),
+                                                                  std::move(meta));
+                    }
+                }
+                catch (std::exception& e) {
+                    cerr << "ERROR in RefreshInstalledThemes(): " << e.what() << endl;
+                }
+                refresh_themes_state = RefreshThemesState::idle;
+            }
+        };
+    }
+
+    bool
+    IsRefreshingThemes()
+    {
+        return refresh_themes_state != RefreshThemesState::idle;
+    }
+
+    void
+    ForEachInstalledTheme(const InstalledThemeFunction& func)
+    {
+        auto installed_themes = safe_installed_themes.lock();
+        for (auto [index, path_theme] : *installed_themes | std::views::enumerate)
+            func(index, path_theme.second);
     }
 
 } // namespace ThemeManager
