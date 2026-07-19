@@ -2,21 +2,23 @@
  * Themiify - A theme manager for the Nintendo Wii U
  * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
- * Copyright (C) 2026  Daniel K. O. <dkosmari>
+ * Copyright (C) 2026 Daniel K. O. <dkosmari>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #include "App.h"
-#include "NavBar.h"
-#include "ContentPanel.h"
-#include "ThemezerAPI.h"
-#include "ImageLoader.h"
-#include "DownloadManager.h"
+
 #include "Camera.h"
-#include "utils.h"
+#include "ContentPanel.h"
+#include "DownloadManager.h"
+#include "ImageLoader.h"
+#include "NavBar.h"
+#include "PluginManager.h"
 #include "ThemeManager.h"
+#include "ThemezerAPI.h"
 #include "timer.hpp"
+#include "utils.h"
 
 #include <chrono>
 #include <fstream>
@@ -228,7 +230,7 @@ namespace App {
         IMG_Init(IMG_INIT_JPG | IMG_INIT_PNG | IMG_INIT_WEBP);
         Mix_Init(MIX_INIT_MP3 | MIX_INIT_OGG);
 
-        Mix_OpenAudioDevice(48000, MIX_DEFAULT_FORMAT, 2, 1024, NULL, SDL_AUDIO_ALLOW_ANY_CHANGE);
+        Mix_OpenAudioDevice(48000, MIX_DEFAULT_FORMAT, 2, 4096, NULL, SDL_AUDIO_ALLOW_ANY_CHANGE);
 
         SDL_EventState(SDL_SYSWMEVENT, SDL_ENABLE);
 
@@ -242,6 +244,7 @@ namespace App {
         Camera::initialize(renderer);
         Camera::open();
 
+        PluginManager::initialize();
         ThemeManager::initialize();
 
         DownloadManager::initialize(user_agent);
@@ -284,6 +287,7 @@ namespace App {
         NavBar::finalize();
         ContentPanel::finalize();
         ThemeManager::finalize();
+        PluginManager::finalize();
         ImageLoader::finalize();
         DownloadManager::finalize();
 

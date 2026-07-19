@@ -2,7 +2,7 @@
  * Themiify - A theme manager for the Nintendo Wii U
  * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
- * Copyright (C) 2026  Daniel K. O. <dkosmari>
+ * Copyright (C) 2026 Daniel K. O. <dkosmari>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -17,12 +17,14 @@
 #include <imgui_raii.h>
 
 #include "DownloadThemePopup.h"
-#include "InstallThemePopup.h"
-#include "../utils.h"
+
 #include "../DownloadManager.h"
 #include "../humanize.hpp"
 #include "../IconsFontAwesome4.h"
+#include "../PluginManager.h"
 #include "../ThemeManager.h"
+#include "../utils.h"
+#include "InstallThemePopup.h"
 
 using std::cout;
 using std::endl;
@@ -47,7 +49,7 @@ namespace DownloadThemePopup {
     std::string transfer_name;
     std::string error_message;
 
-    bool set_current = true;
+    bool enable_theme = true;
 
     void open(const ThemezerAPI::WiiuThemeSmall &theme_data) {
         state = State::queued;
@@ -159,7 +161,9 @@ namespace DownloadThemePopup {
 
         ImGui::TextWrapped("Would you like to install this theme for the StyleMiiU plugin?");
 
-        ImGui::Checkbox("Apply theme after install", &set_current);
+        std::string enable_label = (PluginManager::IsShuffling() ? "Enable"s : "Apply"s)
+            + " theme after installation"s;
+        ImGui::Checkbox(enable_label, enable_theme);
 
         // Make two buttons of equal size.
         const std::string install_label = ICON_FA_COGS " Install";
@@ -184,13 +188,13 @@ namespace DownloadThemePopup {
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
 
         if (ImGui::Button(install_label, button_size)) {
-            ThemeManager::UThemeMetadata theme_data;
-            ThemeManager::GetUThemeMetadata(utheme_filename, theme_data);
+            auto meta = ThemeManager::ReadUThemeMetadata(utheme_filename);
+            assert(meta); // TODO: should have some error handling here
 
             ImGui::CloseCurrentPopup();
             state = State::hidden;
 
-            InstallThemePopup::open(utheme_filename, theme_data, true, set_current);
+            InstallThemePopup::open(utheme_filename, *meta, true, enable_theme);
         }
         ImGui::SetItemDefaultFocus();
 

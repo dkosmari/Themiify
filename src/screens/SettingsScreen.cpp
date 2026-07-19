@@ -2,7 +2,7 @@
  * Themiify - A theme manager for the Nintendo Wii U
  * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
- * Copyright (C) 2026  Daniel K. O. <dkosmari>
+ * Copyright (C) 2026 Daniel K. O. <dkosmari>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -10,7 +10,7 @@
 #include "SettingsScreen.h"
 #include "SettingsPopup.h"
 #include "../NavBar.h"
-#include "../ThemeManager.h"
+#include "../PluginManager.h"
 #include "../utils.h"
 
 #include <iostream>
@@ -194,14 +194,14 @@ namespace SettingsScreen {
 
         ImGui::SeparatorText("StyleMiiU options");
 
-        if (auto cfg= ThemeManager::GetStyleMiiUCfg()) {
+        if (auto cfg= PluginManager::GetConfig()) {
 
             ImGui::Checkbox("Enable plugin", cfg->themeManagerEnabled);
             ImGui::SetItemTooltip("Set \"themeManagerEnabled\"");
 
             bool shuffle_value = cfg->shuffleThemes;
             if (ImGui::Checkbox("Shuffle themes", shuffle_value))
-                ThemeManager::ToggleShuffling();
+                PluginManager::ToggleShuffling();
             ImGui::SetItemTooltip("Set \"suffleThemes\""); // NOTE: typo
 
             ImGui::Checkbox("Mash up themes", cfg->mashupThemes);
@@ -209,6 +209,8 @@ namespace SettingsScreen {
 
             ImGui::Checkbox("Show notifications", cfg->showNotification);
             ImGui::SetItemTooltip("Set \"showNotification\"");
+
+            // TODO: show list of enabled themes
 
             if (ImGui::Button("Change enabled themes..."))
                 NavBar::set_current_tab(NavBar::Tab::manage_themes);
@@ -218,8 +220,8 @@ namespace SettingsScreen {
             ImGui::TextWrapped("Could not parse StyleMiiU configuration.");
         }
 
-        if (ImGui::Button("Delete style-mii-u.json")) {
-            ThemeManager::DeleteStyleMiiUCfg();
+        if (ImGui::Button("Delete Style Mii U configuration")) {
+            PluginManager::DeleteConfig();
         }
 
         SettingsPopup::process_ui();

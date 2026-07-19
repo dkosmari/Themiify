@@ -14,9 +14,9 @@
 
 namespace InstallThemePopup {
     void open(const std::filesystem::path &uthemePath,
-              const ThemeManager::UThemeMetadata &themeData,
-              bool confirmationCompleted,
-              bool setCurrent);
+              const ThemeManager::Metadata &meta,
+              bool skipConfirmation,
+              bool enableTheme);
 
     void process_ui();
 }

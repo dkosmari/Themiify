@@ -2,6 +2,7 @@
  * Themiify - A theme manager for the Nintendo Wii U
  * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
+ * Copyright (C) 2026 Daniel K. O. <dkosmari>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -16,88 +17,80 @@
 #include <string>
 #include <unordered_set>
 #include <vector>
+#include <memory>
 
 namespace ThemeManager {
 
-    struct UThemeMetadata {
+    struct Metadata {
         std::optional<std::string> themeID;
-        std::string themeName;
+        std::string                themeName;
         std::optional<std::string> themeAuthor;
         std::optional<std::string> themeVersion;
     };
 
-    struct InstalledThemeMetadata {
-        UThemeMetadata uthemeMetadata;
-        std::filesystem::path themePath;
-        std::vector<std::filesystem::path> previewPaths;
-        std::filesystem::path legacyMetadataPath;
+    struct Theme {
+        Metadata                           metadata;
+        std::filesystem::path              path;
+        std::vector<std::filesystem::path> previews;
+        std::filesystem::path              legacyMetadataPath;
         std::vector<std::filesystem::path> files;
     };
 
-    struct StyleMiiUCfg {
-        std::unordered_set<std::string> enabledThemes = {};
-        bool mashupThemes = false;
-        bool showNotification = false;
-        bool shuffleThemes = false;
-        bool themeManagerEnabled = false;
-    };
+    using ThemePtr = std::shared_ptr<Theme>;
+    using ConstThemePtr = std::shared_ptr<const Theme>;
 
-    using progress_function_sig = void (const std::string &msg);
-    using progress_function_t = std::function<progress_function_sig>;
+    using ProgressCallbackSignature = void (const std::string &msg);
+    using ProgressFunction = std::move_only_function<ProgressCallbackSignature>;
 
-    using success_function_sig = void ();
-    using success_function_t = std::function<success_function_sig>;
+    using SuccessCallbackSignature = void ();
+    using SuccessFunction = std::move_only_function<SuccessCallbackSignature>;
 
-    using error_function_sig = void (const std::exception &e);
-    using error_function_t = std::function<error_function_sig>;
+    using ErrorCallbackSignature = void (const std::string &msg);
+    using ErrorFunction = std::function<ErrorCallbackSignature>;
 
-    using InstalledThemeCallbackSignature = void (std::size_t index,
-                                                  const InstalledThemeMetadata& meta);
-    using InstalledThemeFunction = std::function<InstalledThemeCallbackSignature>;
+    using ThemeCallbackSignature = void (std::size_t index,
+                                         const ConstThemePtr& theme);
+    using ThemeFunction = std::function<ThemeCallbackSignature>;
+
 
     void initialize();
     void finalize();
-
     void process();
 
-    bool GetUThemeMetadata(const std::filesystem::path &themePath,
-                           UThemeMetadata &meta);
+    std::optional<Metadata>
+    ReadUThemeMetadata(const std::filesystem::path &uthemePath);
 
-    bool GetInstalledThemeMetadata(const std::filesystem::path &installedThemePath,
-                                   InstalledThemeMetadata &imeta);
+    std::optional<Theme>
+    ReadInstalledTheme(const std::filesystem::path &themePath);
 
-    std::vector<InstalledThemeMetadata> GetInstalledThemes(std::stop_token& stopper);
+    void
+    Install(const std::filesystem::path& utheme,
+            const Metadata& metadata,
+            bool enable_theme,
+            ProgressFunction progress_func,
+            SuccessFunction success_func,
+            ErrorFunction error_func);
 
-    void InstallTheme(std::stop_token &stopper,
-                      const std::filesystem::path &themePath,
-                      UThemeMetadata themeMetadata,
-                      progress_function_t progressCallback,
-                      success_function_t successCallback,
-                      error_function_t errorCallback);
-    void UninstallTheme(const InstalledThemeMetadata& meta);
+    void
+    CancelInstall();
 
-    std::string GetCurrentThemeName();
-    std::optional<InstalledThemeMetadata> GetCurrentTheme();
+    void
+    Uninstall(ConstThemePtr theme);
 
-    std::filesystem::path GetThemePath(const UThemeMetadata& meta);
+    std::filesystem::path
+    CalcThemePath(const Metadata& meta);
 
-    bool IsShuffling();
-    void ToggleShuffling();
+    void
+    RefreshInstalledThemes();
 
-    bool IsEnabled(const InstalledThemeMetadata& meta);
-    void Enable(const InstalledThemeMetadata& meta);
-    void Disable(const InstalledThemeMetadata& meta);
+    bool
+    IsRefreshingThemes();
 
-    void ReloadStyleMiiUCfg();
+    void
+    ForEachInstalledTheme(const ThemeFunction& func);
 
-    StyleMiiUCfg* GetStyleMiiUCfg();
-
-    void DeleteStyleMiiUCfg();
-
-    void RefreshInstalledThemes();
-
-    bool IsRefreshingThemes();
-
-    void ForEachInstalledTheme(const InstalledThemeFunction& func);
+    ConstThemePtr
+    GetCurrentTheme()
+        noexcept;
 
 } // namespace ThemeManager

@@ -2,13 +2,14 @@
  * Themiify - A theme manager for the Nintendo Wii U
  * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
- * Copyright (C) 2026  Daniel K. O. <dkosmari>
+ * Copyright (C) 2026 Daniel K. O. <dkosmari>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #include <cmath>
 #include <string>
+#include <utility>
 
 #include <imgui.h>
 #include <imgui_raii.h>
@@ -31,12 +32,12 @@ namespace DeleteThemePopup {
     bool popup_queued;
     const std::string popup_id = "DeleteThemePopup"s;
 
-    ThemeManager::InstalledThemeMetadata installedThemeData;
+    ThemeManager::ConstThemePtr installedTheme;
 
-    void open(const ThemeManager::InstalledThemeMetadata &installed_theme_data) {
+    void open(ThemeManager::ConstThemePtr installed_theme) {
         popup_queued = true;
         state = State::shown;
-        installedThemeData = installed_theme_data;
+        installedTheme = std::move(installed_theme);
     }
 
     void process_ui() {
@@ -73,7 +74,7 @@ namespace DeleteThemePopup {
         }
 
         ImGui::TextWrapped("Would you like to delete \"%s\"?",
-                           installedThemeData.uthemeMetadata.themeName.c_str());
+                           installedTheme->metadata.themeName.c_str());
 
         // Show two buttons with same size.
         const ImVec2 available = ImGui::GetContentRegionAvail();
@@ -98,7 +99,7 @@ namespace DeleteThemePopup {
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
 
         if (ImGui::Button(delete_label, button_size)) {
-            ThemeManager::UninstallTheme(installedThemeData);
+            ThemeManager::Uninstall(installedTheme);
             ImGui::CloseCurrentPopup();
             state = State::hidden;
         }

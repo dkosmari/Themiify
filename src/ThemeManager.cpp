@@ -2,14 +2,14 @@
  * Themiify - A theme manager for the Nintendo Wii U
  * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
- * Copyright (C) 2026  Daniel K. O. <dkosmari>
+ * Copyright (C) 2026 Daniel K. O. <dkosmari>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#include <atomic>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <filesystem>
 #include <format>
@@ -17,178 +17,261 @@
 #include <future>
 #include <iostream>
 #include <map>
-#include <memory>
 #include <print>
-#include <sstream>
+#include <ranges>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
-#include <vector>
-#include <ranges>
 #include <thread>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include <glaze/exceptions/json_exceptions.hpp>
 #include <glaze/json.hpp>
 #include <hips.hpp>
 #include <mocha/mocha.h>
-#include <zip.h>
 
 #include <coreinit/systeminfo.h>
 #include <sysapp/title.h>
 
 #include "ThemeManager.h"
 
+#include "PluginManager.h"
 #include "thread_safe.hpp"
 #include "tracer.hpp"
 #include "utils.h"
+#include "async_queue.hpp"
+#include "Zip.h"
 
 using std::cout;
 using std::cerr;
 using std::endl;
 using namespace std::literals;
 
-/*
- * NOTE: customized StyleMiiUCfg serialization:
- *
- * - enabledThemes is converted to string for the JSON.
- *
- * - shuffleThemes has an alias "suffleThemes" until StyleMiiU decides to fix the config
- *   key.
- */
+// Note: to avoid errors, we rename "metadata" to "Metadata" by customizing the glaze
+// metadata.
+namespace {
+    struct MetadataJson {
+        ThemeManager::Metadata metadata;
+    };
+}
+
+// The built-in glz::pascal_case transformer will make the first letter uppercase.
 template<>
-struct glz::meta<ThemeManager::StyleMiiUCfg> {
-
-    using T = ThemeManager::StyleMiiUCfg;
-
-    static constexpr
-    auto read_enabledThemes = [](T& self,
-                                 const std::string& arg)
-    {
-        self.enabledThemes.clear();
-        auto themes = split(arg, "|", true);
-        for (const auto& theme : themes)
-            if (!theme.empty())
-                self.enabledThemes.insert(theme);
-    };
-
-    static constexpr
-    auto write_enabledThemes = [](const T& self) -> std::string
-    {
-        std::string result;
-        if (self.shuffleThemes) {
-            // Keep them sorted on the JSON.
-            std::vector<std::string> sorted{self.enabledThemes.begin(),
-                                            self.enabledThemes.end()};
-            std::ranges::sort(sorted, {}, as_lower_case);
-            result = join(sorted, "|");
-        } else {
-            if (!self.enabledThemes.empty())
-                result = *self.enabledThemes.begin();
-        }
-        return result;
-    };
-
-    static constexpr
-    auto modify = glz::object(
-        "enabledThemes", glz::custom<read_enabledThemes, write_enabledThemes>,
-
-        "shuffleThemes", &T::shuffleThemes,
-        "suffleThemes", [](auto& self) -> auto& { return self.shuffleThemes; }
-    );
-
-}; // struct glz::meta<ThemeManager::StyleMiiUCfg>
+struct glz::meta<MetadataJson> : glz::pascal_case {};
 
 namespace ThemeManager {
 
-    std::unordered_map<std::string, std::filesystem::path> regionLangMap = {
-        {"UsEn", "UsEnglish/Message/AllMessage.szs"},
-        {"UsFr", "UsFrench/Message/AllMessage.szs"},
-        {"UsPt", "UsPortuguese/Message/AllMessage.szs"},
-        {"UsEs", "UsSpanish/Message/AllMessage.szs"},
-        {"EuNl", "EuDutch/Message/AllMessage.szs"},
-        {"EuEn", "EuEnglish/Message/AllMessage.szs"},
-        {"EuFr", "EuFrench/Message/AllMessage.szs"},
-        {"EuDe", "EuGerman/Message/AllMessage.szs"},
-        {"EuIt", "EuItalian/Message/AllMessage.szs"},
-        {"EuPt", "EuPortuguese/Message/AllMessage.szs"},
-        {"EuRu", "EuRussian/Message/AllMessage.szs"},
-        {"EuEs", "EuSpanish/Message/AllMessage.szs"},
-        {"JpJa", "JpJapanese/Message/AllMessage.szs"}
-    };
-
-    struct StyleMiiUJson {
-        StyleMiiUCfg storageitems;
-    };
-
-    std::optional<StyleMiiUCfg> styleMiiUCfg;
-
-    using InstalledThemes = std::map<std::filesystem::path,
-                                     InstalledThemeMetadata,
-                                     IgnoreCaseLess>;
-
-    thread_safe<InstalledThemes> safe_installed_themes;
-
-    enum class RefreshThemesState : unsigned {
-        idle,
-        working,
-    };
-
-    std::atomic<RefreshThemesState> refresh_themes_state{RefreshThemesState::idle};
-
-    std::jthread refresh_themes_thread;
-
-
     namespace {
 
-        std::filesystem::path
-        realGetStyleMiiUConfigPath()
+        // ----------------- //
+        // Type declarations //
+        // ----------------- //
+
+        enum class RefreshThemesState : unsigned {
+            idle,
+            working,
+        };
+
+        struct InstallContext {
+            const std::filesystem::path utheme_path;
+            std::optional<Metadata> metadata;
+            const bool enable_theme;
+            ProgressFunction progress_func;
+            SuccessFunction success_func;
+            ErrorFunction error_func;
+            std::filesystem::path theme_path;
+
+            InstallContext(const std::filesystem::path& utheme_path,
+                           const Metadata& metadata,
+                           bool enable_theme,
+                           ProgressFunction progress_func,
+                           SuccessFunction success_func,
+                           ErrorFunction error_func);
+        };
+
+        // RAII type to control Home Button Menu state.
+        struct HomeButtonMenuDisabler {
+
+            HomeButtonMenuDisabler()
+                noexcept;
+
+            ~HomeButtonMenuDisabler()
+                noexcept;
+
+        }; // struct HomeButtonMenuDisabler
+
+        // RAII type to clean up theme installation on error.
+        struct InstallCleaner {
+
+            InstallCleaner(const std::filesystem::path& theme_path);
+
+            ~InstallCleaner()
+                noexcept;
+
+            void
+            disable();
+
+        private:
+
+            const std::filesystem::path theme_path;
+            bool disabled = false;
+
+        }; // struct InstallCleaner
+
+        // ------------ //
+        // Type aliases //
+        // ------------ //
+
+        using ThemesMap = std::map<std::filesystem::path, ConstThemePtr, IgnoreCaseLess>;
+
+        using Task = std::future<void>;
+
+        using InstallContextPtr = std::shared_ptr<InstallContext>;
+
+        // --------- //
+        // Variables //
+        // --------- //
+
+        const std::unordered_map<std::string, std::filesystem::path> regionLangMap = {
+            {"UsEn", "UsEnglish/Message/AllMessage.szs"},
+            {"UsFr", "UsFrench/Message/AllMessage.szs"},
+            {"UsPt", "UsPortuguese/Message/AllMessage.szs"},
+            {"UsEs", "UsSpanish/Message/AllMessage.szs"},
+            {"EuNl", "EuDutch/Message/AllMessage.szs"},
+            {"EuEn", "EuEnglish/Message/AllMessage.szs"},
+            {"EuFr", "EuFrench/Message/AllMessage.szs"},
+            {"EuDe", "EuGerman/Message/AllMessage.szs"},
+            {"EuIt", "EuItalian/Message/AllMessage.szs"},
+            {"EuPt", "EuPortuguese/Message/AllMessage.szs"},
+            {"EuRu", "EuRussian/Message/AllMessage.szs"},
+            {"EuEs", "EuSpanish/Message/AllMessage.szs"},
+            {"JpJa", "JpJapanese/Message/AllMessage.szs"}
+        };
+
+        thread_safe<ThemesMap> safe_themes_map;
+
+        std::atomic<RefreshThemesState> refresh_themes_state{RefreshThemesState::idle};
+
+        std::jthread refresh_themes_thread;
+
+        async_queue<Task> pending_tasks;
+
+        std::jthread install_thread;
+
+        // --------------------- //
+        // Function declarations //
+        // --------------------- //
+
+        // TODO: keep them sorted
+
+        void
+        TaskReportInstallProgress(InstallContextPtr ctx,
+                                  std::string msg);
+        void
+        TaskReportInstallError(InstallContextPtr ctx,
+                               std::string msg);
+
+        std::filesystem::path GetMenuContentPath();
+
+        void
+        InstallThread(std::stop_token stopper,
+                      InstallContextPtr ctx)
+            noexcept;
+
+        template<typename F,
+                 typename... Args>
+        void
+        add_task(F&& func,
+                 Args&& ...args);
+
+        void
+        exec_tasks();
+
+        std::string
+        to_string(Hips::Result res);
+
+        void
+        CreateCacheFile(std::ifstream &sourceFile,
+                        const std::filesystem::path &outputPath);
+
+        // -------------------- //
+        // Function definitions //
+        // -------------------- //
+
+        // TODO: keep them sorted
+
+        InstallContext::InstallContext(const std::filesystem::path& utheme_path,
+                                       const Metadata& metadata,
+                                       bool enable_theme,
+                                       ProgressFunction progress_func,
+                                       SuccessFunction success_func,
+                                       ErrorFunction error_func) :
+            utheme_path{utheme_path},
+            metadata{metadata},
+            enable_theme{enable_theme},
+            progress_func{std::move(progress_func)},
+            success_func{std::move(success_func)},
+            error_func{std::move(error_func)}
+        {}
+
+        HomeButtonMenuDisabler::HomeButtonMenuDisabler()
+            noexcept
         {
-            char buffer[256];
-            auto res = Mocha_GetEnvironmentPath(buffer, sizeof buffer);
-            if (res) {
-                std::runtime_error e{"Could not get Aroma environment path: "s
-                                     + Mocha_GetStatusStr(res)};
-                cerr << "ERROR: " << e.what() << endl;
-                throw e;
-            }
-            return std::filesystem::path{buffer} / "plugins/config/style-mii-u.json";
+            OSEnableHomeButtonMenu(false);
         }
 
-        std::filesystem::path
-        GetStyleMiiUConfigPath()
+        HomeButtonMenuDisabler::~HomeButtonMenuDisabler()
+            noexcept
         {
-            static const std::filesystem::path result = realGetStyleMiiUConfigPath();
-            return result;
+            OSEnableHomeButtonMenu(true);
         }
 
-        static void LoadStyleMiiUCfg() {
-            styleMiiUCfg.reset();
-            auto stylemiiu_cfg_path = GetStyleMiiUConfigPath();
-            if (!exists(stylemiiu_cfg_path)) {
-                // If config doesn't exist yet, it's not an error.
-                styleMiiUCfg.emplace();
-                return;
-            }
-            StyleMiiUJson json;
-            glz::ex::read_file_json(json, stylemiiu_cfg_path.string(), std::string{});
-            styleMiiUCfg = std::move(json.storageitems);
-            // Constraint: at most one theme can be enabled when not shuffling.
-            if (!styleMiiUCfg->shuffleThemes && styleMiiUCfg->enabledThemes.size() > 1) {
-                auto first = *styleMiiUCfg->enabledThemes.begin();
-                styleMiiUCfg->enabledThemes = { first };
+        InstallCleaner::InstallCleaner(const std::filesystem::path& theme_path) :
+            theme_path{theme_path}
+        {}
+
+        InstallCleaner::~InstallCleaner()
+            noexcept
+        {
+            if (!disabled) {
+                cerr << "Deleting partially installed theme: " << theme_path << endl;
+                DeletePath(theme_path);
             }
         }
 
-        void SaveStyleMiiUCfg() {
-            if (!styleMiiUCfg)
-                throw std::runtime_error{"No valid StyleMiiU config state to store."};
-            StyleMiiUJson json;
-            json.storageitems = *styleMiiUCfg;
-            glz::ex::write_file_json<glz::opts{.prettify = true}>(
-                json,
-                GetStyleMiiUConfigPath().string(),
-                std::string{}
-            );
+        void
+        InstallCleaner::disable()
+        {
+            disabled = true;
+        }
+
+        void
+        TaskReportInstallError(InstallContextPtr ctx,
+                               std::string msg)
+        {
+            cerr << "TaskReportInstallError: " << msg << endl;
+            if (ctx->error_func)
+                ctx->error_func(msg);
+        }
+
+        void
+        TaskReportInstallProgress(InstallContextPtr ctx,
+                                  std::string msg)
+        {
+            cout << "TaskReportInstallProgress: " << msg << endl;
+            if (ctx->progress_func)
+                ctx->progress_func(msg);
+        }
+
+        void
+        TaskReportInstallSuccess(InstallContextPtr ctx)
+        {
+            cout << "TaskReportInstallSuccess: " << ctx->metadata->themeName << endl;
+            if (ctx->enable_theme)
+                PluginManager::Enable(ctx->theme_path);
+            if (ctx->success_func)
+                ctx->success_func();
         }
 
         std::filesystem::path GetMenuContentPath() {
@@ -206,336 +289,58 @@ namespace ThemeManager {
             return "storage_mlc:/sys/title" / std::filesystem::path{splitMenuID} / "content";
         }
 
-    } // namespace
 
-
-    void initialize()
-    {
-        TRACE_FUNC;
-
+        void
+        InstallThread(std::stop_token stopper,
+                      InstallContextPtr ctx)
+            noexcept
         try {
-            LoadStyleMiiUCfg();
-        }
-        catch (std::exception &e) {
-            cerr << "ERROR: failed to load StyleMiiU config: " << e.what() << endl;
-        }
-
-        refresh_themes_thread = {};
-        refresh_themes_state = RefreshThemesState::idle;
-
-        RefreshInstalledThemes();
-    }
-
-    void finalize()
-    {
-        TRACE_FUNC;
-        try {
-            SaveStyleMiiUCfg();
-        }
-        catch (std::exception &e) {
-            cerr << "ERROR: failed to save StyleMiiU config: " << e.what() << endl;
-        }
-
-        refresh_themes_thread = {};
-    }
-
-    void process()
-    {
-        // TODO
-    }
-
-    void CreateCacheFile(std::ifstream &sourceFile, const std::filesystem::path &outputPath) {
-        if (!sourceFile.is_open()) {
-            cerr << "Invalid or unopened source file" << endl;
-            return;
-        }
-
-        std::size_t sourceSize = static_cast<std::size_t>(sourceFile.tellg());
-        sourceFile.seekg(0, std::ios::beg);
-
-        std::vector<unsigned char> buffer(sourceSize);
-        sourceFile.read(reinterpret_cast<char*>(buffer.data()), sourceSize);
-
-        if (!sourceFile) {
-            cerr << "Error reading source file to create cache file." << endl;
-            return;
-        }
-
-        std::ofstream outputFile(outputPath, std::ios::binary | std::ios::trunc);
-        if (!outputFile.is_open()) {
-            cerr << "Failed to open output file for writing: " << outputPath << endl;
-            return;
-        }
-
-        outputFile.write(reinterpret_cast<const char*>(buffer.data()), buffer.size());
-
-        if (!outputFile) {
-            cerr << "Error writing cache file to " << outputPath << endl;
-            return;
-        }
-
-        cout << "Successfully cached file to: " << outputPath << endl;
-    }
-
-    struct MetadataJson {
-        UThemeMetadata Metadata;
-    };
-
-    struct LegacyMetadataJson {
-        struct {
-            std::string themeName;
-            std::string themeAuthor;
-            std::string themeID;
-            std::string themeIDPath;
-            std::string themeVersion;
-            std::string themeInstallPath;
-        } ThemeData;
-    };
-
-    bool GetUThemeMetadata(const std::filesystem::path &themePath,
-                           UThemeMetadata &umeta) {
-        try {
-            zip_t *themeArchive;
-            zip_error_t error;
-            int err;
-
-            umeta = {};
-
-            if (!(themeArchive = zip_open(themePath.c_str(), 0, &err))) {
-                zip_error_init_with_code(&error, err);
-                cerr << "Cannot open theme archive. Error Code: "
-                     << zip_error_strerror(&error) << endl;
-                zip_error_fini(&error);
-                return false;
+            if (!ctx->metadata) {
+                ctx->metadata = ReadUThemeMetadata(ctx->utheme_path);
+                if (!ctx->metadata)
+                    throw std::runtime_error{"could not get utheme metadata"};
             }
 
-            zip_file_t *themeMetadataFile;
-            if (!(themeMetadataFile = zip_fopen(themeArchive, "metadata.json", ZIP_RDONLY))) {
-                zip_error_init_with_code(&error, err);
-                cerr << "Cannot open theme metadata. Error Code: "
-                     << zip_error_strerror(&error) << endl;
-                zip_error_fini(&error);
-                zip_close(themeArchive);
-                return false;
-            }
+            ctx->theme_path = CalcThemePath(*ctx->metadata);
+            const auto& themePath = ctx->theme_path;
 
-            zip_stat_t metadataStatData;
-            if (zip_stat(themeArchive, "metadata.json", 0, &metadataStatData) != 0) {
-                zip_error_init_with_code(&error, err);
-                cerr << "Cannot stat theme metadata! Error Code: "
-                     << zip_error_strerror(&error) << endl;
-                zip_error_fini(&error);
-                zip_fclose(themeMetadataFile);
-                zip_close(themeArchive);
-                return 0;
-            }
-
-            std::string buffer(metadataStatData.size, '\0');
-            zip_fread(themeMetadataFile, buffer.data(), metadataStatData.size);
-            zip_fclose(themeMetadataFile);
-            zip_close(themeArchive);
-
-            MetadataJson metaJson;
-            glz::ex::read_json(metaJson, buffer);
-            umeta = std::move(metaJson.Metadata);
-            return true;
-        }
-        catch (std::exception& e) {
-            cerr << "ERROR: " << e.what() << endl;
-            return false;
-        }
-    }
-
-    bool GetInstalledThemeMetadata(const std::filesystem::path &installedThemePath,
-                                   InstalledThemeMetadata &imeta) {
-
-        static const std::array image_extensions{".webp", ".jpg", ".png"};
-        try {
-            imeta = {};
-            imeta.themePath = installedThemePath;
-            try {
-                for (auto& entry
-                         : std::filesystem::recursive_directory_iterator{imeta.themePath}) {
-                    if (entry.is_regular_file())
-                        imeta.files.push_back(entry.path());
-                }
-                std::ranges::sort(imeta.files, {}, as_lower_case);
-            }
-            catch (std::exception &e) {
-                cerr << "Error listing files inside theme. SD card may be corrupted." << endl;
-            }
-
-            static const std::array image_names{
-                "preview-collage",
-                "preview-launcher",
-                "preview-warawara"
-            };
-            for (auto name : image_names) {
-                auto preview_base = imeta.themePath / name;
-                for (auto ext : image_extensions) {
-                    auto preview = preview_base;
-                    preview += ext;
-                    if (exists(preview)) {
-                        imeta.previewPaths.push_back(preview);
-                        break;
-                    }
-                }
-            }
-            MetadataJson metaJson;
-            glz::ex::read_file_json(metaJson,
-                                    (installedThemePath / "metadata.json").string(),
-                                    std::string{});
-            imeta.uthemeMetadata = std::move(metaJson.Metadata);
-
-            // If there was no preview image on the theme folder, look for a cached thumbnail.
-            if (imeta.themePath.empty() && imeta.uthemeMetadata.themeID) {
-                auto preview = theme_id_to_cached_thumbnail_path(*imeta.uthemeMetadata.themeID);
-                if (exists(preview))
-                    imeta.previewPaths.push_back(preview);
-            }
-
-            return true;
-        }
-        catch (std::exception& e) {
-            // cout << "Failed to get new theme metadata: " << e.what() << endl;
-
-            // Fallback: find a json (in SD:/themiify/installed/) that matches this theme.
-            auto folder_name = installedThemePath.filename();
-            try {
-                for (auto entry
-                         : std::filesystem::directory_iterator{THEMIIFY_INSTALLED_THEMES}) {
-                    if (!entry.is_regular_file())
-                        continue;
-                    if (entry.path().extension() != ".json")
-                        continue;
-                    try {
-                        LegacyMetadataJson legacyMetaJson;
-                        glz::ex::read_file_json(legacyMetaJson, entry.path().string(), std::string{});
-                        auto& leg_meta = legacyMetaJson.ThemeData;
-                        if (leg_meta.themeID.empty()) // not a Themezer theme, skip it
-                            continue;
-                        auto meta_folder_name = std::filesystem::path{leg_meta.themeInstallPath}.filename();
-                        if (folder_name == meta_folder_name) {
-                            imeta.uthemeMetadata.themeID = leg_meta.themeID;
-                            imeta.uthemeMetadata.themeName = leg_meta.themeName;
-                            imeta.uthemeMetadata.themeAuthor = leg_meta.themeAuthor;
-                            imeta.uthemeMetadata.themeVersion = leg_meta.themeVersion;
-                            imeta.legacyMetadataPath = entry.path();
-                            auto preview =
-                                theme_id_to_cached_thumbnail_path(*imeta.uthemeMetadata.themeID);
-                            if (exists(preview))
-                                imeta.previewPaths.push_back(preview);
-                            return true;
-                        }
-                    }
-                    catch (std::exception& e3) {
-                        cout << "Failed to parse " << entry.path()
-                             << ": " << e3.what() << endl;
-                    }
-                }
-                // No matching metadata found, just use the folder name as the name.
-                imeta.uthemeMetadata.themeName = folder_name;
-                return true;
-            }
-            catch (std::exception& e2) {
-                cerr << "ERROR: while looking for themiify metadata: " << e2.what() << endl;
-                return false;
-            }
-            return false;
-        }
-    }
-
-    std::vector<InstalledThemeMetadata> GetInstalledThemes(std::stop_token& stopper) {
-        std::vector<InstalledThemeMetadata> result;
-        try {
-            for (auto& entry : std::filesystem::directory_iterator{THEMES_ROOT}) {
-                if (stopper.stop_requested())
-                    break;
-                if (!entry.is_directory())
-                    continue;
-                InstalledThemeMetadata meta;
-                if (GetInstalledThemeMetadata(entry.path(), meta))
-                    result.push_back(std::move(meta));
-            }
-            if (stopper.stop_requested())
-                return result;
-            // Now sort them by path.
-            std::ranges::sort(result,
-                              {},
-                              [](const InstalledThemeMetadata& meta) -> std::string
-                              {
-                                  return as_lower_case(meta.themePath);
-                              });
-        }
-        catch (std::exception &e) {
-            cerr << "ERROR in Installer::GetInstalledThemes(): "
-                 << e.what() << endl;
-        }
-        return result;
-    }
-
-    void InstallTheme(std::stop_token &stopper,
-                      const std::filesystem::path &uthemePath,
-                      UThemeMetadata themeMetadata,
-                      progress_function_t progressCallback,
-                      success_function_t successCallback,
-                      error_function_t errorCallback) {
-
-        zip_t *themeArchive = nullptr;
-        zip_file_t *patchFile = nullptr;
-        std::filesystem::path themePath;
-
-        try {
-
-            auto reportProgress = [&progressCallback](const std::string &msg) {
-                if (progressCallback)
-                    progressCallback(msg);
-                else
-                    cout << msg << endl;
+            // Helper lambda
+            auto reportProgress =
+                [&ctx]<typename... Args>(std::format_string<Args...> fmt,
+                                         Args&&... args)
+            {
+                std::string msg = std::format(fmt, std::forward<Args>(args)...);
+                add_task(TaskReportInstallProgress, ctx, std::move(msg));
             };
 
+            // Helper lambda
             auto throwIfStopped = [&stopper] {
                 if (stopper.stop_requested())
                     throw std::runtime_error{"Installation canceled."};
             };
 
-            OSEnableHomeButtonMenu(FALSE);
+            HomeButtonMenuDisabler hbm_disabler;
+            InstallCleaner cleaner{themePath};
 
             auto menuContentPath = GetMenuContentPath();
 
-            zip_error_t error;
-            int err;
+            throwIfStopped();
+
+            Zip::Archive uthemeArchive{ctx->utheme_path, ZIP_RDONLY};
 
             throwIfStopped();
 
-            if (!(themeArchive = zip_open(uthemePath.c_str(), 0, &err))) {
-                zip_error_init_with_code(&error, err);
-                std::string msg = "Cannot open theme archive:"s + zip_error_strerror(&error);
-                zip_error_fini(&error);
-                throw std::runtime_error{msg};
-            }
-
-            throwIfStopped();
-
-            reportProgress(std::format("Installing {}...", themeMetadata.themeName));
-
-            themePath = GetThemePath(themeMetadata);
-
-            reportProgress(std::format("Installing theme to: \"{}\"", themePath.string()));
-
-            int64_t numEntries;
-            if ((numEntries = zip_get_num_entries(themeArchive, ZIP_FL_UNCHANGED)) < 0) {
-                zip_close(themeArchive);
-                throw std::runtime_error{"themeArchive is NULL"};
-            }
+            reportProgress("Installing {}...", ctx->metadata->themeName);
+            reportProgress("Installing theme to: \"{}\"", themePath.string());
 
             const std::string AllMessage_ = "AllMessage_";
-            for (uint64_t i = 0; i < static_cast<uint64_t>(numEntries); ++i) {
+            const std::uint64_t numEntries = uthemeArchive.get_num_entries(ZIP_FL_UNCHANGED);
+            for (std::uint64_t i = 0; i < numEntries; ++i) {
 
                 throwIfStopped();
 
+                std::filesystem::path entryName = uthemeArchive.get_name(i, ZIP_FL_ENC_RAW);
                 std::filesystem::path menuFilePath;
-                std::filesystem::path entryName = zip_get_name(themeArchive, i, ZIP_FL_ENC_RAW);
                 std::string entryStem = entryName.stem().string();
 
                 if (entryName == "Men.bps") {
@@ -551,7 +356,8 @@ namespace ThemeManager {
                     std::string regionLangStr = entryStem.substr(AllMessage_.size(), 4);
                     auto it = regionLangMap.find(regionLangStr);
                     if (it == regionLangMap.end()) {
-                        reportProgress(std::format("Unknown AllMessage Region and Language: \"{}\"", regionLangStr));
+                        reportProgress("Unknown AllMessage Region and Language: \"{}\"",
+                                       regionLangStr);
                         continue;
                     }
 
@@ -560,8 +366,7 @@ namespace ThemeManager {
 
                 if (!menuFilePath.empty()) {
                     // Found a known patch.
-                    reportProgress(std::format("Handling patch for \"{}\"",
-                                               menuFilePath.string()));
+                    reportProgress("Handling patch for \"{}\"", menuFilePath.string());
 
                     auto menuPath = menuContentPath / menuFilePath;
                     auto cachePath = THEMIIFY_ROOT / "cache" / menuFilePath;
@@ -570,63 +375,43 @@ namespace ThemeManager {
 
                     CreateParentDirectories(cachePath);
 
-                    if (!(patchFile = zip_fopen(themeArchive, patchPath.c_str(), ZIP_RDONLY))) {
-                        zip_error_init_with_code(&error, err);
-                        std::string msg = std::format("Cannot open \"{}\"!. Error: {}",
-                                                      patchPath.string(),
-                                                      zip_error_strerror(&error));
-                        zip_error_fini(&error);
-                        throw std::runtime_error{msg};
-                    }
+                    auto patchFile = uthemeArchive.fopen(i);
 
-                    zip_stat_t patchStatData;
-                    if (zip_stat(themeArchive, patchPath.c_str(), 0, &patchStatData) != 0) {
-                        zip_error_init_with_code(&error, err);
-                        std::string msg = std::format("Cannot stat \"{}\"!. Error: {}",
-                                                      patchPath.string(),
-                                                      zip_error_strerror(&error));
-                        zip_error_fini(&error);
-                        zip_fclose(patchFile);
-                        patchFile = nullptr;
-                        throw std::runtime_error{msg};
-                    }
+                    zip_stat_t patchStatData = uthemeArchive.stat(i);
 
                     throwIfStopped();
 
-                    std::size_t patchSize = patchStatData.size;
+                    auto patchSize = patchStatData.size;
 
                     std::ifstream inputFile(cachePath, std::ios::binary | std::ios::ate);
                     if (!inputFile.is_open()) {
-                        reportProgress(std::format("Cache does not exist for \"{}\"",
-                                                   menuPath.string()));
+                        reportProgress("Cache does not exist for \"{}\"",
+                                       menuPath.string());
 
                         inputFile.clear();
                         inputFile.open(menuPath, std::ios::binary | std::ios::ate);
 
                         if (!inputFile.is_open()) {
                             inputFile.clear();
-                            zip_fclose(patchFile);
-                            patchFile = nullptr;
-                            // NOTE: don't error out, just report
-                            reportProgress(std::format("Could not open source file for \"{}\"",
-                                                       patchPath.string()));
+                            // NOTE: don't stop installation, just report and continue
+                            reportProgress("Could not open source file for \"{}\"",
+                                           patchPath.string());
                             continue;
                         }
-                        reportProgress(std::format("Creating cache for \"{}\"",
-                                                   menuPath.string()));
+                        reportProgress("Creating cache for \"{}\"", menuPath.string());
                         CreateCacheFile(inputFile, cachePath);
                     }
                     else {
-                        reportProgress(std::format("Found \"{}\" in cache at \"{}\"",
-                                                   menuFilePath.string(),
-                                                   cachePath.string()));
+                        reportProgress("Found \"{}\" in cache at \"{}\"",
+                                       menuFilePath.string(),
+                                       cachePath.string());
                     }
 
                     throwIfStopped();
 
-                    std::size_t inputSize = inputFile.tellg();
-                    if (inputSize != inputFile.tellg())
-                        throw std::runtime_error{"Input file is too large."};
+                    auto inputSize = inputFile.tellg();
+                    // if (inputSize != inputFile.tellg())
+                    //     throw std::runtime_error{"Input file is too large."};
                     inputFile.seekg(0, std::ios::beg);
 
                     throwIfStopped();
@@ -634,13 +419,16 @@ namespace ThemeManager {
                     std::vector<uint8_t> patchData(patchSize);
                     std::vector<uint8_t> inputData(inputSize);
 
-                    zip_fread(patchFile, patchData.data(), patchData.size());
-                    zip_fclose(patchFile);
-                    patchFile = nullptr;
+                    if (patchFile.read(std::span{patchData}) != patchData.size())
+                        throw std::runtime_error{"Could not read the whole patch"};
+
+                    patchFile.close();
 
                     throwIfStopped();
 
                     inputFile.read(reinterpret_cast<char*>(inputData.data()), inputData.size());
+                    if (std::cmp_not_equal(inputFile.gcount(), inputData.size()))
+                        throw std::runtime_error{"Could not read the whole input"};
                     inputFile.close();
 
                     throwIfStopped();
@@ -653,38 +441,31 @@ namespace ThemeManager {
                         Hips::PatchType::BPS
                     );
 
+                    reportProgress("Patch processed");
+
                     throwIfStopped();
 
                     if (result == Hips::Result::Success) {
                         CreateParentDirectories(outputPath);
 
+                        throwIfStopped();
+
                         std::ofstream outputFile(outputPath, std::ios::binary);
                         outputFile.write(reinterpret_cast<char*>(bytes.data()), bytes.size());
                         outputFile.close();
 
-                        reportProgress(std::format("File written to \"{}\"",
-                                                   outputPath.string()));
+                        reportProgress("File written to \"{}\"", outputPath.string());
                     }
                     else {
-                        throw std::runtime_error{std::format("Patch failed! Hips result: {}",
-                                                             static_cast<unsigned>(result))};
+                        throw std::runtime_error{"Patch failed: " + to_string(result)};
                     }
                 }
                 else {
                     // Not a known patch: if it's not a .bps file, just copy it verbatim
                     // to themePath.
                     if (entryName.extension() != ".bps") {
-                        reportProgress(format("Copying file: \"{}\"", entryName.string()));
-                        if (!(patchFile = zip_fopen(themeArchive,
-                                                    entryName.c_str(),
-                                                    ZIP_RDONLY))) {
-                            zip_error_init_with_code(&error, err);
-                            std::string msg = std::format("Cannot open \"{}\"!. Error: {}",
-                                                          entryName.string(),
-                                                          zip_error_strerror(&error));
-                            zip_error_fini(&error);
-                            throw std::runtime_error{msg};
-                        }
+                        reportProgress("Copying file: \"{}\"", entryName.string());
+                        auto patchFile = uthemeArchive.fopen(i);
                         auto outputPath = themePath / entryName;
                         if (outputPath.has_parent_path())
                             create_directories(outputPath.parent_path());
@@ -694,193 +475,332 @@ namespace ThemeManager {
                             throw std::runtime_error{"Could not create output file: \""s
                                                      + outputPath.string() + "\""s};
                         std::vector<char> buf(65536);
-                        zip_int64_t read = 0;
-                        zip_int64_t total = 0;
-                        while ((read = zip_fread(patchFile, buf.data(), buf.size())) > 0) {
+                        std::uint64_t total = 0;
+                        while (auto read = patchFile.read(std::span{buf})) {
                             output.sputn(buf.data(), read);
                             total += read;
                         }
                         output.close();
-                        zip_fclose(patchFile);
-                        patchFile = nullptr;
-                        reportProgress(std::format("File written to \"{}\" ({} bytes)",
-                                                   outputPath.string(),
-                                                   total));
+                        patchFile.close();
+                        reportProgress("File written to \"{}\" ({} bytes)",
+                                       outputPath.string(),
+                                       total);
                     }
                 }
             }
 
-            zip_close(themeArchive);
-            themeArchive = nullptr;
+            uthemeArchive.close();
 
             throwIfStopped();
 
-            InstalledThemeMetadata imeta;
-            if (GetInstalledThemeMetadata(themePath, imeta))
-                safe_installed_themes.lock()
-                    ->emplace(imeta.themePath.filename(), imeta);
+            if (auto theme = ReadInstalledTheme(themePath))
+                safe_themes_map.lock()
+                    ->emplace(themePath.filename(), std::make_shared<Theme>(std::move(*theme)));
             else
                 throw std::runtime_error{"Could not read metadata from installed theme!"};
 
-            OSEnableHomeButtonMenu(TRUE);
+            cleaner.disable();
 
-            if (successCallback)
-                successCallback();
+            add_task(TaskReportInstallSuccess, ctx);
         }
-        catch (std::exception &e) {
-            if (patchFile)
-                zip_fclose(patchFile);
-            if (themeArchive)
-                zip_close(themeArchive);
-            cerr << "Deleting partially installed theme: " << themePath << endl;
-            if (!themePath.empty())
-                DeletePath(themePath);
-            if (errorCallback)
-                errorCallback(e);
-            else
-                cerr << "ERROR: " << e.what() << endl;
-            OSEnableHomeButtonMenu(TRUE);
+        catch (std::exception& e) {
+            std::string msg = e.what();
+            add_task(TaskReportInstallError, std::move(ctx), std::move(msg));
+        }
+
+        template<typename F,
+                 typename... Args>
+        void
+        add_task(F&& func,
+                 Args&& ...args)
+        {
+            pending_tasks.push(std::async(std::launch::deferred,
+                                          std::forward<F>(func),
+                                          std::forward<Args>(args)...));
+        }
+
+        void
+        exec_tasks()
+        {
+            while (auto task = pending_tasks.try_pop())
+                task->get();
+        }
+
+        std::string
+        to_string(Hips::Result res)
+        {
+            switch (res) {
+                using enum Hips::Result;
+                case Success:
+                    return "success";
+                case InvalidPatch:
+                    return "invalid patch";
+                case UnknownFormat:
+                    return "unknown format";
+                case SizeMismatch:
+                    return "size mismatch";
+                case ChecksumMismatch:
+                    return "checksum mismatch";
+                default:
+                    return "unknown error";
+            }
+        }
+
+        void
+        CreateCacheFile(std::ifstream &sourceFile,
+                             const std::filesystem::path &outputPath)
+        {
+            if (!sourceFile.is_open()) {
+                cerr << "Invalid or unopened source file" << endl;
+                return;
+            }
+
+            std::size_t sourceSize = static_cast<std::size_t>(sourceFile.tellg());
+            sourceFile.seekg(0, std::ios::beg);
+
+            std::vector<unsigned char> buffer(sourceSize);
+            sourceFile.read(reinterpret_cast<char*>(buffer.data()), sourceSize);
+
+            if (!sourceFile) {
+                cerr << "Error reading source file to create cache file." << endl;
+                return;
+            }
+
+            std::ofstream outputFile(outputPath, std::ios::binary | std::ios::trunc);
+            if (!outputFile.is_open()) {
+                cerr << "Failed to open output file for writing: " << outputPath << endl;
+                return;
+            }
+
+            outputFile.write(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+
+            if (!outputFile) {
+                cerr << "Error writing cache file to " << outputPath << endl;
+                return;
+            }
+
+            cout << "Successfully cached file to: " << outputPath << endl;
+        }
+
+    } // namespace
+
+
+    void initialize()
+    {
+        TRACE_FUNC;
+
+        refresh_themes_thread = {};
+        refresh_themes_state = RefreshThemesState::idle;
+
+        RefreshInstalledThemes();
+
+        install_thread = {};
+    }
+
+    void finalize()
+    {
+        TRACE_FUNC;
+
+        install_thread = {};
+        refresh_themes_thread = {};
+    }
+
+    void process()
+    {
+        exec_tasks();
+    }
+
+    struct LegacyMetadataJson {
+        struct {
+            std::string themeName;
+            std::string themeAuthor;
+            std::string themeID;
+            std::string themeIDPath;
+            std::string themeVersion;
+            std::string themeInstallPath;
+        } ThemeData;
+    };
+
+    std::optional<Metadata>
+    ReadUThemeMetadata(const std::filesystem::path &uthemePath)
+    try {
+        Zip::Archive uthemeArchive{uthemePath, ZIP_RDONLY};
+        auto metadataStatData = uthemeArchive.stat("metadata.json", ZIP_FL_NOCASE);
+        std::string buffer(metadataStatData.size, '\0');
+        auto themeMetadataFile = uthemeArchive.fopen("metadata.json", ZIP_FL_NOCASE);
+        if (themeMetadataFile.read(std::span{buffer}) != buffer.size())
+            throw std::runtime_error{"could not read all metadata"};
+        themeMetadataFile.close();
+        uthemeArchive.close();
+        MetadataJson json;
+        glz::ex::read_json(json, buffer);
+        return { std::move(json.metadata) };
+    }
+    catch (std::exception& e) {
+        cerr << "ERROR: " << e.what() << endl;
+        return {};
+    }
+
+    std::optional<Theme>
+    ReadInstalledTheme(const std::filesystem::path &themePath)
+    {
+        static const std::array image_extensions{".webp", ".jpg", ".png"};
+        try {
+            Theme theme;
+            theme.path = themePath;
+            try {
+                for (auto& entry
+                         : std::filesystem::recursive_directory_iterator{theme.path}) {
+                    if (entry.is_regular_file())
+                        theme.files.push_back(entry.path());
+                }
+                std::ranges::sort(theme.files, IgnoreCaseLess{});
+            }
+            catch (std::exception &e) {
+                cerr << "Error listing files inside theme. SD card may be corrupted." << endl;
+            }
+
+            static const std::array image_names{
+                "preview-collage",
+                "preview-launcher",
+                "preview-warawara"
+            };
+            for (auto name : image_names) {
+                auto preview_base = theme.path / name;
+                for (auto ext : image_extensions) {
+                    auto preview = preview_base;
+                    preview += ext;
+                    if (exists(preview)) {
+                        theme.previews.push_back(preview);
+                        break;
+                    }
+                }
+            }
+            MetadataJson metaJson;
+            glz::ex::read_file_json(metaJson,
+                                    (theme.path / "metadata.json").string(),
+                                    std::string{});
+            theme.metadata = std::move(metaJson.metadata);
+
+            // If there was no preview image on the theme folder, look for a cached thumbnail.
+            if (theme.path.empty() && theme.metadata.themeID) {
+                auto preview = theme_id_to_cached_thumbnail_path(*theme.metadata.themeID);
+                if (exists(preview))
+                    theme.previews.push_back(preview);
+            }
+
+            return {std::move(theme)};
+        }
+        catch (std::exception& e) {
+            // cout << "Failed to get new theme metadata: " << e.what() << endl;
+            // Fallback: find a json (in SD:/themiify/installed/) that matches this theme.
+            try {
+                auto folder_name = themePath.filename();
+                Theme theme;
+                theme.path = themePath;
+                for (auto entry
+                         : std::filesystem::directory_iterator{THEMIIFY_INSTALLED_THEMES}) {
+                    if (!entry.is_regular_file())
+                        continue;
+                    if (entry.path().extension() != ".json")
+                        continue;
+                    try {
+                        LegacyMetadataJson legacyMetaJson;
+                        glz::ex::read_file_json(legacyMetaJson, entry.path().string(), std::string{});
+                        auto& leg_meta = legacyMetaJson.ThemeData;
+                        if (leg_meta.themeID.empty()) // not a Themezer theme, skip it
+                            continue;
+                        auto meta_folder_name = std::filesystem::path{leg_meta.themeInstallPath}.filename();
+                        if (folder_name == meta_folder_name) {
+                            theme.metadata.themeID = leg_meta.themeID;
+                            theme.metadata.themeName = leg_meta.themeName;
+                            theme.metadata.themeAuthor = leg_meta.themeAuthor;
+                            theme.metadata.themeVersion = leg_meta.themeVersion;
+                            theme.legacyMetadataPath = entry.path();
+                            auto preview =
+                                theme_id_to_cached_thumbnail_path(*theme.metadata.themeID);
+                            if (exists(preview))
+                                theme.previews.push_back(preview);
+                            return {std::move(theme)};
+                        }
+                    }
+                    catch (std::exception& e3) {
+                        cout << "Failed to parse " << entry.path()
+                             << ": " << e3.what() << endl;
+                    }
+                }
+                // No matching metadata found, just use the folder name as the name.
+                theme.metadata.themeName = folder_name;
+                return {std::move(theme)};
+            }
+            catch (std::exception& e2) {
+                cerr << "ERROR: while looking for themiify metadata: " << e2.what() << endl;
+                return {};
+            }
+            return {};
         }
     }
 
-    void UninstallTheme(const InstalledThemeMetadata& meta_) {
-        auto meta = meta_; // make sure a copy is preserved.
+    void
+    Install(const std::filesystem::path& utheme,
+            const Metadata& metadata,
+            bool enable_theme,
+            ProgressFunction progress_func,
+            SuccessFunction success_func,
+            ErrorFunction error_func)
+    {
+        auto ctx = std::make_shared<InstallContext>(utheme,
+                                                    metadata,
+                                                    enable_theme,
+                                                    std::move(progress_func),
+                                                    std::move(success_func),
+                                                    std::move(error_func));
+        install_thread = std::jthread{InstallThread, std::move(ctx)};
+    }
 
-        Disable(meta);
+    void
+    CancelInstall()
+    {
+        install_thread = {};
+    }
 
-        safe_installed_themes.lock()
-            ->erase(meta.themePath.filename());
+    void
+    Uninstall(ConstThemePtr theme)
+    {
+        PluginManager::Disable(theme->path);
+
+        safe_themes_map.lock()
+            ->erase(theme->path.filename());
 
         // If there's a cached thumbnail, delete it.
-        if (meta.uthemeMetadata.themeID) {
-            auto thumbnail = theme_id_to_cached_thumbnail_path(*meta.uthemeMetadata.themeID);
+        if (theme->metadata.themeID) {
+            auto thumbnail = theme_id_to_cached_thumbnail_path(*theme->metadata.themeID);
             if (exists(thumbnail))
                 DeletePath(thumbnail);
         }
 
         // If there's legacy metadata, delete it.
-        if (!meta.legacyMetadataPath.empty()) {
-            if (exists(meta.legacyMetadataPath))
-                DeletePath(meta.legacyMetadataPath);
+        auto& leg_meta = theme->legacyMetadataPath;
+        if (!leg_meta.empty()) {
+            if (exists(leg_meta))
+                DeletePath(leg_meta);
         }
 
         // Finally, delete the theme path with all its contents.
-        DeletePath(meta.themePath);
-    }
-
-    std::string
-    GetCurrentThemeName()
-    {
-        auto cfg = GetStyleMiiUCfg();
-        if (!cfg)
-            return {};
-        if (!cfg->themeManagerEnabled)
-            return {};
-        if (cfg->enabledThemes.size() != 1)
-            return {};
-        return *cfg->enabledThemes.begin();
-    }
-
-    std::optional<InstalledThemeMetadata>
-    GetCurrentTheme()
-    try {
-        auto cfg = GetStyleMiiUCfg();
-        if (!cfg)
-            return {};
-        if (!cfg->themeManagerEnabled)
-            return {};
-        auto themeName = GetCurrentThemeName();
-        cout << "current theme name: \"" << themeName << "\"" << endl;
-        if (themeName.empty())
-            return {};
-        auto themePath = THEMES_ROOT / themeName;
-        if (!exists(themePath))
-            return {};
-        InstalledThemeMetadata result;
-        if (!GetInstalledThemeMetadata(themePath, result))
-            return {};
-        return { std::move(result) };
-    }
-    catch (std::exception& e) {
-        cerr << "ERROR in GetCurrentTheme(): " << e.what() << endl;
-        return {};
+        DeletePath(theme->path);
     }
 
     std::filesystem::path
-    GetThemePath(const UThemeMetadata& meta)
+    CalcThemePath(const Metadata& meta)
     {
         return THEMES_ROOT / make_theme_folder_name(meta.themeName, meta.themeID);
-    }
-
-    bool IsShuffling() {
-        auto cfg = GetStyleMiiUCfg();
-        if (!cfg)
-            return false;
-        return cfg->shuffleThemes;
-    }
-
-    void ToggleShuffling() {
-        auto cfg = GetStyleMiiUCfg();
-        if (!cfg)
-            return;
-        cfg->shuffleThemes = !cfg->shuffleThemes;
-        if (!cfg->shuffleThemes)
-            cfg->enabledThemes.clear();
-    }
-
-    bool IsEnabled(const InstalledThemeMetadata& meta) {
-        auto cfg = GetStyleMiiUCfg();
-        if (!cfg)
-            return false;
-        auto theme_str = meta.themePath.filename().string();
-        return cfg->enabledThemes.contains(theme_str);
-    }
-
-    void Enable(const InstalledThemeMetadata& meta) {
-        auto cfg = GetStyleMiiUCfg();
-        if (!cfg)
-            return;
-        auto theme_str = meta.themePath.filename().string();
-        if (!cfg->shuffleThemes)
-            cfg->enabledThemes.clear();
-        cfg->enabledThemes.insert(theme_str);
-    }
-
-    void Disable(const InstalledThemeMetadata& meta) {
-        auto cfg = GetStyleMiiUCfg();
-        if (!cfg)
-            return;
-        auto theme_str = meta.themePath.filename().string();
-        cfg->enabledThemes.erase(theme_str);
-    }
-
-    StyleMiiUCfg*
-    GetStyleMiiUCfg()
-    {
-        if (!styleMiiUCfg)
-            return nullptr;
-        return &*styleMiiUCfg;
-    }
-
-    void
-    DeleteStyleMiiUCfg()
-    {
-        try {
-            auto cfg_path = GetStyleMiiUConfigPath();
-            if (exists(cfg_path))
-                remove(cfg_path);
-            styleMiiUCfg.emplace();
-        }
-        catch (std::exception& e) {
-            cerr << "ERROR in DeleteStyleMiiUCfg(): " << e.what() << endl;
-        }
     }
 
     void
     RefreshInstalledThemes()
     {
         refresh_themes_state = RefreshThemesState::working;
-        safe_installed_themes.lock()->clear();
+        safe_themes_map.lock()->clear();
         refresh_themes_thread = std::jthread{
             [](std::stop_token stopper)
             {
@@ -890,10 +810,10 @@ namespace ThemeManager {
                             break;
                         if (!entry.is_directory())
                             continue;
-                        InstalledThemeMetadata meta;
-                        if (GetInstalledThemeMetadata(entry.path(), meta))
-                            safe_installed_themes.lock()->emplace(entry.path().filename(),
-                                                                  std::move(meta));
+                        if (auto theme = ReadInstalledTheme(entry.path()))
+                            safe_themes_map.lock()->emplace(
+                                entry.path().filename(),
+                                std::make_shared<Theme>(std::move(*theme)));
                     }
                 }
                 catch (std::exception& e) {
@@ -911,11 +831,25 @@ namespace ThemeManager {
     }
 
     void
-    ForEachInstalledTheme(const InstalledThemeFunction& func)
+    ForEachInstalledTheme(const ThemeFunction& func)
     {
-        auto installed_themes = safe_installed_themes.lock();
-        for (auto [index, path_theme] : *installed_themes | std::views::enumerate)
+        auto themes = safe_themes_map.lock();
+        for (auto [index, path_theme] : *themes | std::views::enumerate)
             func(index, path_theme.second);
+    }
+
+    ConstThemePtr
+    GetCurrentTheme()
+        noexcept
+    {
+        auto name = PluginManager::GetCurrentTheme();
+        if (name.empty())
+            return {};
+        auto themes = safe_themes_map.lock();
+        auto it = themes->find(name);
+        if (it == themes->end())
+            return {};
+        return it->second;
     }
 
 } // namespace ThemeManager

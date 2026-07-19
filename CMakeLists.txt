@@ -7,32 +7,34 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_executable(themiify
-    src/main.cpp
     src/App.cpp
-    src/NavBar.cpp
-    src/ContentPanel.cpp
-    src/graphql.cpp
     src/byte_stream.cpp
-    src/tracer.cpp
-    src/utils.cpp
-    src/humanize.cpp
-    src/ThemeManager.cpp
-    src/ThemezerAPI.cpp
-    src/timer.cpp
-    src/ImageLoader.cpp
-    src/DownloadManager.cpp
     src/Camera.cpp
+    src/ContentPanel.cpp
+    src/DownloadManager.cpp
+    src/graphql.cpp
+    src/humanize.cpp
+    src/ImageLoader.cpp
+    src/main.cpp
+    src/NavBar.cpp
+    src/PluginManager.cpp
+    src/screens/DeleteThemePopup.cpp
+    src/screens/DownloadThemePopup.cpp
     src/screens/HomeScreen.cpp
+    src/screens/InstallThemePopup.cpp
     src/screens/ManageThemesScreen.cpp
-    src/screens/ThemezerScreen.cpp
+    src/screens/QRCodePopup.cpp
+    src/screens/SettingsPopup.cpp
     src/screens/SettingsScreen.cpp
     src/screens/ThemeDetailsPopup.cpp
     src/screens/ThemePreviewPopup.cpp
-    src/screens/DownloadThemePopup.cpp
-    src/screens/InstallThemePopup.cpp
-    src/screens/DeleteThemePopup.cpp
-    src/screens/SettingsPopup.cpp
-    src/screens/QRCodePopup.cpp
+    src/screens/ThemezerScreen.cpp
+    src/ThemeManager.cpp
+    src/ThemezerAPI.cpp
+    src/timer.cpp
+    src/tracer.cpp
+    src/utils.cpp
+    src/Zip.cpp
 )
 wut_create_rpx(themiify)
 wut_create_wuhb(themiify

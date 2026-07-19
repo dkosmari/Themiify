@@ -13,27 +13,29 @@
 #include <utility>
 
 
-template<typename T>
+template<typename T,
+         typename M = std::mutex>
 class thread_safe {
 
-    mutable std::mutex mutex;
+    mutable M mutex;
     T data;
 
 public:
 
+    // NOTE: the guard has its own type, to allow it to become const when using c_lock().
     template<typename U>
     class guard {
 
-        std::unique_lock<std::mutex> guard_;
+        std::unique_lock<M> guard_;
         U* data_ = nullptr;
 
-        guard(std::mutex& m,
+        guard(M& m,
               U* d) :
             guard_{m},
             data_{d}
         {}
 
-        guard(std::unique_lock<std::mutex>&& locker,
+        guard(std::unique_lock<M>&& locker,
               U* d) :
             guard_{std::move(locker)},
             data_{d}

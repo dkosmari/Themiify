@@ -19,15 +19,16 @@
 #include <imgui_raii.h>
 
 #include "ManageThemesScreen.h"
-#include "HomeScreen.h"
-#include "InstallThemePopup.h"
-#include "ThemeDetailsPopup.h"
-#include "DeleteThemePopup.h"
-#include "../ThemeManager.h"
-#include "../utils.h"
+
 #include "../IconsFontAwesome4.h"
 #include "../ImageLoader.h"
+#include "../PluginManager.h"
+#include "../ThemeManager.h"
 #include "../tracer.hpp"
+#include "../utils.h"
+#include "DeleteThemePopup.h"
+#include "InstallThemePopup.h"
+#include "ThemeDetailsPopup.h"
 
 // Define this to help seeing the padding and spacing values for windows.
 // #define DEBUG_BG_COLOR
@@ -37,8 +38,6 @@ using std::endl;
 using namespace std::literals;
 
 namespace ManageThemesScreen {
-
-    using ThemeManager::InstalledThemeMetadata;
 
     enum class Tab {
         manage_installed,
@@ -50,7 +49,7 @@ namespace ManageThemesScreen {
     std::vector<std::filesystem::path> local_uthemes;
     bool local_uthemes_needs_refresh = true;
 
-    std::vector<InstalledThemeMetadata> installed_themes;
+    std::vector<ThemeManager::ConstThemePtr> installed_themes;
 
     SDL_Renderer *manage_renderer;
 
@@ -126,14 +125,14 @@ namespace ManageThemesScreen {
         io.MousePos = old_mouse_pos;
     }
 
-    void show_installed_theme(const ThemeManager::InstalledThemeMetadata& theme_data,
+    void show_installed_theme(const ThemeManager::ConstThemePtr& theme,
                               const ImVec2& inner_size,
                               const ImVec2& padding) {
         // NOTE: to create a complex button, we create a button with no text, then overlap
         // the contents.
         using namespace ImGui::RAII;
 
-        ID id{theme_data.themePath.string()};
+        ID id{theme->path.string()};
 
         const auto& style = ImGui::GetStyle();
         const ImVec2 outer_size = inner_size + 2 * padding;
@@ -167,15 +166,15 @@ namespace ManageThemesScreen {
         {
             const ImVec2 img_size = {inner_size.x, inner_size.x * 9.0f / 16.0f};
             StyleVar no_border{ImGuiStyleVar_ImageBorderSize, 0};
-            auto img = !theme_data.previewPaths.empty()
-                ? ImageLoader::get(theme_data.previewPaths.front())
+            auto img = !theme->previews.empty()
+                ? ImageLoader::get(theme->previews.front())
                 : ImageLoader::get("ui/theme-placeholder-no-preview.png");
             ImGui::Image((ImTextureID)img, img_size);
         }
 
-        auto cfg = ThemeManager::GetStyleMiiUCfg();
+        auto cfg = PluginManager::GetConfig();
         bool is_shuffling = cfg && cfg->shuffleThemes;
-        bool is_enabled = ThemeManager::IsEnabled(theme_data);
+        bool is_enabled = PluginManager::IsEnabled(theme->path);
 
         // NOTE: Measure size for the active marker, but don't place it yet, to not mess
         // with the cursor position.
@@ -196,15 +195,15 @@ namespace ManageThemesScreen {
             // Make sure to limit the name width, so it doesn't get covered by the enabled
             // icon.
             float name_width = inner_size.x - enabled_size.x - style.ItemSpacing.x;
-            text_limited(name_width, theme_data.uthemeMetadata.themeName);
+            text_limited(name_width, theme->metadata.themeName);
         }
 
-        if (theme_data.uthemeMetadata.themeAuthor) {
+        if (theme->metadata.themeAuthor) {
             Font font{nullptr, 18};
             // Make sure to limit the author width, so it doesn't get
             // covered by the enabled icon.
             float author_width = inner_size.x - enabled_size.x - style.ItemSpacing.x;
-            text_limited(author_width, "by " + *theme_data.uthemeMetadata.themeAuthor);
+            text_limited(author_width, "by " + *theme->metadata.themeAuthor);
         }
 
         // Put active marker on bottom right.
@@ -216,15 +215,14 @@ namespace ManageThemesScreen {
             if (clicked && ImGui::IsItemHovered()) {
                 clicked = false; // cancel the click
                 if (is_enabled)
-                    ThemeManager::Disable(theme_data);
+                    PluginManager::Disable(theme->path);
                 else
-                    ThemeManager::Enable(theme_data);
-                HomeScreen::force_refresh();
+                    PluginManager::Enable(theme->path);
             }
         }
 
         if (clicked)
-            ThemeDetailsPopup::open_local(theme_data);
+            ThemeDetailsPopup::open_local(theme);
     }
 
     void show_utheme(const std::filesystem::path& utheme_path) {
@@ -266,9 +264,8 @@ namespace ManageThemesScreen {
         ImGui::SetCursorPosX(text_wrap_pos + style.ItemSpacing.x);
 
         if (ImGui::Button(install_label, install_size)) {
-            ThemeManager::UThemeMetadata theme_data;
-            ThemeManager::GetUThemeMetadata(utheme_path, theme_data);
-            InstallThemePopup::open(utheme_path, theme_data, false, true);
+            if (auto meta = ThemeManager::ReadUThemeMetadata(utheme_path))
+                InstallThemePopup::open(utheme_path, *meta, false, true);
         }
 
         ImGui::SameLine();
@@ -330,13 +327,13 @@ namespace ManageThemesScreen {
         installed_themes.clear();
         ThemeManager::ForEachInstalledTheme(
             [](std::size_t /*index*/,
-               const InstalledThemeMetadata& meta)
+               const ThemeManager::ConstThemePtr& theme)
             {
-                installed_themes.push_back(meta);
+                installed_themes.push_back(theme);
             }
         );
         for (std::size_t i = 0; i < installed_themes.size(); ++i) {
-            int score = similarity_score(installed_themes[i].uthemeMetadata.themeName,
+            int score = similarity_score(installed_themes[i]->metadata.themeName,
                                          search);
 
             if (search.empty() || score >= 0)
@@ -347,10 +344,10 @@ namespace ManageThemesScreen {
             std::ranges::sort(
                 visible_indexes,
                 [&](std::size_t a, std::size_t b) {
-                    const auto& ta = installed_themes[a];
-                    const auto& tb = installed_themes[b];
-                    auto sa = similarity_score(ta.uthemeMetadata.themeName, search);
-                    auto sb = similarity_score(tb.uthemeMetadata.themeName, search);
+                    const auto& ta = *installed_themes[a];
+                    const auto& tb = *installed_themes[b];
+                    auto sa = similarity_score(ta.metadata.themeName, search);
+                    auto sb = similarity_score(tb.metadata.themeName, search);
                     return sa > sb;
                 }
             );
@@ -366,20 +363,20 @@ namespace ManageThemesScreen {
 
         ImGui::SameLine();
 
-        auto cfg = ThemeManager::GetStyleMiiUCfg();
+        auto cfg = PluginManager::GetConfig();
         if (cfg) {
             bool is_shuffling = cfg->shuffleThemes;
             if (ImGui::Checkbox("Shuffle", is_shuffling))
-                ThemeManager::ToggleShuffling();
+                PluginManager::ToggleShuffling();
 
             if (is_shuffling) {
                 ImGui::SameLine();
                 if (ImGui::Button(enable_all_label)) {
                     ThemeManager::ForEachInstalledTheme(
                         [](std::size_t,
-                           const InstalledThemeMetadata& theme)
+                           const ThemeManager::ConstThemePtr& theme)
                         {
-                            ThemeManager::Enable(theme);
+                            PluginManager::Enable(theme->path);
                         }
                     );
                 }
@@ -387,9 +384,9 @@ namespace ManageThemesScreen {
                 if (ImGui::Button(disable_all_label)) {
                     ThemeManager::ForEachInstalledTheme(
                         [](std::size_t,
-                           const InstalledThemeMetadata& theme)
+                           const ThemeManager::ConstThemePtr& theme)
                         {
-                            ThemeManager::Disable(theme);
+                            PluginManager::Disable(theme->path);
                         }
                     );
                 }
@@ -409,7 +406,7 @@ namespace ManageThemesScreen {
             const ImVec2 spacing = {18, 18};
 
             for (auto [counter, index] : visible_indexes | std::views::enumerate) {
-                auto& theme = installed_themes[index];
+                const auto& theme = installed_themes[index];
                 ImVec2 grid_pos = { float(counter % 3), float(counter / 3) };
                 ImVec2 pos = grid_pos * (outer_size + spacing);
                 ImGui::SetCursorPos(grid_start_pos + pos);

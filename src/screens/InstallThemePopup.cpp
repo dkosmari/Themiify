@@ -10,21 +10,20 @@
 #include <iostream>
 #include <filesystem>
 #include <string>
-#include <thread>
-#include <atomic>
 
 #include <imgui.h>
 #include <imgui_raii.h>
 
 #include "InstallThemePopup.h"
-#include "ManageThemesScreen.h"
-#include "HomeScreen.h"
-#include "../utils.h"
-#include "../thread_safe.hpp"
-#include "../IconsFontAwesome4.h"
 
-using std::cout;
+#include "../IconsFontAwesome4.h"
+#include "../PluginManager.h"
+#include "../utils.h"
+#include "HomeScreen.h"
+#include "ManageThemesScreen.h"
+
 using std::cerr;
+using std::cout;
 using std::endl;
 using namespace std::literals;
 
@@ -41,26 +40,24 @@ namespace InstallThemePopup {
             success,
         };
 
-        std::atomic<State> state = State::hidden;
+        State state = State::hidden;
 
         bool popup_queued;
         const std::string popup_id = "Install Theme"s;
 
         std::filesystem::path utheme_path;
-        ThemeManager::UThemeMetadata theme_data;
-        bool set_current = true;
+        ThemeManager::Metadata theme_meta;
+        bool enable_theme = true;
 
-        std::jthread install_thread;
-        thread_safe<std::vector<std::string>> progress_messages;
-        thread_safe<std::string> error_message;
-        std::atomic_bool scroll_to_bottom;
+        std::vector<std::string> progress_messages;
+        std::string error_message;
+        bool scroll_to_bottom;
 
         void
         progress_handler(const std::string& msg)
         {
             cout << "PROGRESS: " << msg << endl;
-            auto msgs = progress_messages.lock();
-            msgs->push_back(msg);
+            progress_messages.push_back(msg);
             scroll_to_bottom = true;
         }
 
@@ -72,10 +69,10 @@ namespace InstallThemePopup {
         }
 
         void
-        error_handler(const std::exception& e)
+        error_handler(const std::string& msg)
         {
-            cerr << "ERROR: " << e.what() << endl;
-            error_message.store(e.what());
+            cerr << "ERROR: " << msg << endl;
+            error_message = msg;
             state = State::error;
             scroll_to_bottom = true;
         }
@@ -94,22 +91,19 @@ namespace InstallThemePopup {
 
                 {
                     Font msg_font{nullptr, 24};
+
                     // Show progress messages.
-                    {
-                        auto msgs = progress_messages.c_lock();
-                        if (!msgs->empty()) {
-                            for (const auto& msg : *msgs)
-                                ImGui::TextWrapped(msg);
-                            ImGui::Spacing();
-                        }
+                    if (!progress_messages.empty()) {
+                        for (const auto& msg : progress_messages)
+                            ImGui::TextWrapped(msg);
+                        ImGui::Spacing();
                     }
 
                     // Show error message.
                     {
                         StyleColor red_text{ImGuiCol_Text, {1.0f, 0.25f, 0.25f, 1.0f}};
-                        auto msg = error_message.lock();
-                        if (!msg->empty())
-                            ImGui::TextWrapped(*msg);
+                        if (!error_message.empty())
+                            ImGui::TextWrapped(error_message);
                     }
 
                     if (scroll_to_bottom) {
@@ -123,35 +117,35 @@ namespace InstallThemePopup {
     } // namespace
 
     void open(const std::filesystem::path &uthemePath,
-              const ThemeManager::UThemeMetadata &themeData,
-              bool confirmationCompleted,
-              bool setCurrent) {
+              const ThemeManager::Metadata &meta,
+              bool skipConfirmation,
+              bool enableTheme) {
         create_directories(THEMES_ROOT);
 
         utheme_path = uthemePath;
-        theme_data = themeData;
+        theme_meta = meta;
 
-        if (confirmationCompleted)
+        if (skipConfirmation)
             state = State::start_install;
         else
             state = State::confirmation;
 
-        set_current = setCurrent;
+        enable_theme = enableTheme;
         popup_queued = true;
 
-        install_thread = {};
-
-        progress_messages.lock()->clear();
-        error_message.lock()->clear();
+        progress_messages.clear();
+        error_message.clear();
     }
 
     void show_state_confirmation() {
         const auto &style = ImGui::GetStyle();
 
         ImGui::TextWrapped("Would you like to install the theme:\n%s ?",
-                           theme_data.themeName.c_str());
+                           theme_meta.themeName.c_str());
 
-        ImGui::Checkbox("Set as current theme after installation", &set_current);
+        std::string enable_label = (PluginManager::IsShuffling() ? "Enable"s : "Apply"s)
+            + " theme after installation"s;
+        ImGui::Checkbox(enable_label, enable_theme);
 
         ImVec2 button_size{180, 0};
 
@@ -178,20 +172,12 @@ namespace InstallThemePopup {
 
     void show_state_start_install() {
         state = State::installing;
-        install_thread = std::jthread([](std::stop_token stopper) {
-            ThemeManager::InstallTheme(stopper,
-                                       utheme_path,
-                                       theme_data,
-                                       progress_handler,
-                                       success_handler,
-                                       error_handler);
-            if (state == State::success && set_current) {
-                auto theme_path = ThemeManager::GetThemePath(theme_data);
-                ThemeManager::InstalledThemeMetadata imeta;
-                if (ThemeManager::GetInstalledThemeMetadata(theme_path, imeta))
-                    ThemeManager::Enable(imeta);
-            }
-        });
+        ThemeManager::Install(utheme_path,
+                              theme_meta,
+                              enable_theme,
+                              progress_handler,
+                              success_handler,
+                              error_handler);
     }
 
     void show_state_installing() {
@@ -202,7 +188,7 @@ namespace InstallThemePopup {
         ImGui::Dummy({0.0f, 0.0f});
         {
             Font title_font{nullptr, 40};
-            ImGui::TextWrapped("Installing %s...", theme_data.themeName.c_str());
+            ImGui::TextWrapped("Installing %s...", theme_meta.themeName.c_str());
         }
 
         ImGui::Separator();
@@ -216,7 +202,7 @@ namespace InstallThemePopup {
         if (button_x > 0.0f)
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + button_x);
         if (ImGui::Button("Cancel", button_size))
-            install_thread = {};
+            ThemeManager::CancelInstall();
     }
 
     void show_state_error() {
@@ -271,7 +257,6 @@ namespace InstallThemePopup {
             ImGui::CloseCurrentPopup();
             state = State::hidden;
             ManageThemesScreen::refresh_local_uthemes();
-            HomeScreen::force_refresh();
         }
         ImGui::SetItemDefaultFocus();
 
@@ -281,7 +266,6 @@ namespace InstallThemePopup {
             ImGui::CloseCurrentPopup();
             state = State::hidden;
             ManageThemesScreen::refresh_local_uthemes();
-            HomeScreen::force_refresh();
         }
     }
 
@@ -312,7 +296,6 @@ namespace InstallThemePopup {
 
         if (!popup) {
             state = State::hidden;
-            install_thread = {};
             return;
         }
 
