@@ -223,8 +223,11 @@ namespace ThemezerScreen {
             std::string status_label;
             ImVec4 status_color;
             if (auto itheme = ThemeManager::GetThemeByID(theme.hexId)) {
-                if (itheme->metadata.themeVersion &&
-                    itheme->metadata.themeVersion != theme.updatedAt) {
+                // If version mismatch OR it's a legacy theme, suggest an update.
+                if ((itheme->metadata.themeVersion &&
+                     itheme->metadata.themeVersion != theme.updatedAt)
+                    ||
+                    !itheme->legacyMetadataPath.empty()) {
                     status_label = ICON_FA_REFRESH;
                     status_color = { 1.0f, 0.7f, 0.0f, 1.0f };
                 } else {
