@@ -144,87 +144,96 @@ namespace SettingsScreen {
         }
 
         ImGui::SeparatorText("Special files");
+        {
+            Indent _;
+            if (ImGui::Button("Check integrity of Wii U Menu files")) {
+                SettingsPopup::open(SettingsPopup::OpenState::integrity);
+            }
 
-        if (ImGui::Button("Check integrity of Wii U Menu files")) {
-            SettingsPopup::open(SettingsPopup::OpenState::integrity);
-        }
+            ImGui::SameLine();
 
-        ImGui::SameLine();
+            ImGui::Checkbox("Check at every boot", settings.check_integrity_at_boot);
 
-        ImGui::Checkbox("Check at every boot", settings.check_integrity_at_boot);
+            if (ImGui::Button("Dump Wii U Menu files")) {
+                SettingsPopup::open(SettingsPopup::OpenState::dump);
+            }
 
-        if (ImGui::Button("Dump Wii U Menu files")) {
-            SettingsPopup::open(SettingsPopup::OpenState::dump);
-        }
-
-        if (ImGui::Button("Clear Themiify cache")) {
-            SettingsPopup::open(SettingsPopup::OpenState::cache);
+            if (ImGui::Button("Clear Themiify cache")) {
+                SettingsPopup::open(SettingsPopup::OpenState::cache);
+            }
         }
 
         ImGui::SeparatorText("Sound options");
+        {
+            Indent _;
+            ImGui::Text("Background music volume level:");
+            if (ImGui::SliderInt("##volume", &settings.music_volume, 0, 100, "%d%%")) {
 
-        ImGui::Text("Background music volume level:");
-        if (ImGui::SliderInt("##volume", &settings.music_volume, 0, 100, "%d%%")) {
-
-            int mix_volume = (settings.music_volume * MIX_MAX_VOLUME) / 100;
-            Mix_VolumeMusic(mix_volume);
+                int mix_volume = (settings.music_volume * MIX_MAX_VOLUME) / 100;
+                Mix_VolumeMusic(mix_volume);
+            }
         }
 
         ImGui::SeparatorText("StyleMiiU options");
+        {
+            Indent _;
 
-        if (auto cfg = PluginManager::GetConfig()) {
+            if (auto cfg = PluginManager::GetConfig()) {
 
-            ImGui::Checkbox("Enable plugin", cfg->themeManagerEnabled);
-            ImGui::SetItemTooltip("Set \"themeManagerEnabled\"");
+                ImGui::Checkbox("Enable plugin", cfg->themeManagerEnabled);
+                ImGui::SetItemTooltip("Set \"themeManagerEnabled\"");
 
-            bool shuffle_value = cfg->shuffleThemes;
-            if (ImGui::Checkbox("Shuffle themes", shuffle_value))
-                PluginManager::ToggleShuffling();
-            ImGui::SetItemTooltip("Set \"suffleThemes\""); // NOTE: typo
+                bool shuffle_value = cfg->shuffleThemes;
+                if (ImGui::Checkbox("Shuffle themes", shuffle_value))
+                    PluginManager::ToggleShuffling();
+                ImGui::SetItemTooltip("Set \"suffleThemes\""); // NOTE: typo
 
-            ImGui::Checkbox("Mash up themes", cfg->mashupThemes);
-            ImGui::SetItemTooltip("Set \"mashupThemes\"");
+                ImGui::Checkbox("Mash up themes", cfg->mashupThemes);
+                ImGui::SetItemTooltip("Set \"mashupThemes\"");
 
-            ImGui::Checkbox("Show notifications", cfg->showNotification);
-            ImGui::SetItemTooltip("Set \"showNotification\"");
+                ImGui::Checkbox("Show notifications", cfg->showNotification);
+                ImGui::SetItemTooltip("Set \"showNotification\"");
 
-            ImGui::Text("Enabled themes:");
-            {
-                Indent _;
-                const ImVec2 themes_size = {
-                    0,
-                    5 * ImGui::GetTextLineHeightWithSpacing()
-                };
-                if (Child enabled_themes{"enabled_themes",
-                                         themes_size,
-                                         ImGuiChildFlags_Borders}) {
-                    auto available_width = ImGui::GetContentRegionAvail().x;
-                    ItemWidth set_width{available_width};
-                    ThemeManager::ForEachInstalledTheme(
-                        [](std::size_t, const ThemeManager::ConstThemePtr& theme)
-                        {
-                            bool enabled = PluginManager::IsEnabled(theme->path);
-                            if (ImGui::Checkbox(theme->path.filename().string(), enabled)) {
-                                if (enabled)
-                                    PluginManager::Enable(theme->path);
-                                else
-                                    PluginManager::Disable(theme->path);
+                if (ImGui::CollapsingHeader("Enabled themes:")) {
+                    Indent _2;
+                    const ImVec2 themes_size = {
+                        0,
+                        8 * ImGui::GetTextLineHeightWithSpacing()
+                    };
+                    if (Child enabled_themes{"enabled_themes",
+                                             themes_size,
+                                             ImGuiChildFlags_Borders}) {
+                        auto available_width = ImGui::GetContentRegionAvail().x;
+                        ItemWidth set_width{available_width};
+                        ThemeManager::ForEachInstalledTheme(
+                            [](std::size_t, const ThemeManager::ConstThemePtr& theme)
+                            {
+                                bool enabled = PluginManager::IsEnabled(theme->path);
+                                if (ImGui::Checkbox("##" + theme->path.filename().string(),
+                                                    enabled)) {
+                                    if (enabled)
+                                        PluginManager::Enable(theme->path);
+                                    else
+                                        PluginManager::Disable(theme->path);
+                                }
+                                ImGui::SameLine();
+                                ImGui::TextWrapped(theme->path.filename().string());
                             }
-                        }
-                    );
+                        );
+                    }
                 }
+
+                if (ImGui::Button("Manage installed themes..."))
+                    NavBar::set_current_tab(NavBar::Tab::manage_themes);
+                ImGui::SetItemTooltip("Set \"enabledThemes\"");
+
+            } else {
+                ImGui::TextWrapped("Could not parse StyleMiiU configuration.");
             }
 
-            if (ImGui::Button("Manage installed themes..."))
-                NavBar::set_current_tab(NavBar::Tab::manage_themes);
-            ImGui::SetItemTooltip("Set \"enabledThemes\"");
-
-        } else {
-            ImGui::TextWrapped("Could not parse StyleMiiU configuration.");
-        }
-
-        if (ImGui::Button("Delete Style Mii U configuration")) {
-            PluginManager::DeleteConfig();
+            if (ImGui::Button("Delete Style Mii U configuration")) {
+                PluginManager::DeleteConfig();
+            }
         }
 
         SettingsPopup::process_ui();
