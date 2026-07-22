@@ -55,7 +55,7 @@ namespace DownloadThemePopup {
         state = State::queued;
         transfer_name = theme_data.name;
         utheme_url = theme_data.downloadUrl;
-        utheme_filename = make_utheme_filename(theme_data.slug, theme_data.hexId);
+        utheme_filename = ThemeManager::CalcUThemePath(theme_data.slug, theme_data.hexId);
         error_message.clear();
     }
 
@@ -103,6 +103,7 @@ namespace DownloadThemePopup {
                                           {
                                               cout << "Finished " << info.filename << endl;
                                               state = State::success;
+                                              ThemeManager::RefreshUThemes();
                                           },
                                           [](const std::exception& e)
                                           {
@@ -188,13 +189,11 @@ namespace DownloadThemePopup {
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
 
         if (ImGui::Button(install_label, button_size)) {
-            auto meta = ThemeManager::ReadUThemeMetadata(utheme_filename);
-            assert(meta); // TODO: should have some error handling here
-
             ImGui::CloseCurrentPopup();
             state = State::hidden;
-
-            InstallThemePopup::open(utheme_filename, *meta, true, enable_theme);
+            // TODO: report error if a .utheme is missing metadata.
+            if (auto meta = ThemeManager::ReadUThemeMetadata(utheme_filename))
+                InstallThemePopup::open(utheme_filename, meta, true, enable_theme);
         }
         ImGui::SetItemDefaultFocus();
 

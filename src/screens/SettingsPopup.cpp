@@ -514,6 +514,7 @@ namespace SettingsPopup {
         if (start_x > 0)
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
 
+        // TODO: move this thread to ThemeManager
         if (ImGui::Button(dump_label, button_size)) {
             start_worker([] {
                 bool dump_success = true;
@@ -521,7 +522,7 @@ namespace SettingsPopup {
                 auto dump_one = [](const std::filesystem::path& src,
                                    const std::filesystem::path& dst) {
                     std::ifstream file(src, std::ios::binary | std::ios::ate);
-                    CreateParentDirectories(dst);
+                    create_directories(dst.parent_path());
                     CreateCacheFile(file, dst);
                     return exists(dst) && file_size(dst) > 0;
                 };

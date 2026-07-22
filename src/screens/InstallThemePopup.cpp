@@ -19,7 +19,6 @@
 #include "../IconsFontAwesome4.h"
 #include "../PluginManager.h"
 #include "../utils.h"
-#include "HomeScreen.h"
 #include "ManageThemesScreen.h"
 
 using std::cerr;
@@ -45,8 +44,8 @@ namespace InstallThemePopup {
         bool popup_queued;
         const std::string popup_id = "Install Theme"s;
 
-        std::filesystem::path utheme_path;
-        ThemeManager::Metadata theme_meta;
+        std::filesystem::path utheme;
+        ThemeManager::ConstMetadataPtr metadata;
         bool enable_theme = true;
 
         std::vector<std::string> progress_messages;
@@ -54,22 +53,19 @@ namespace InstallThemePopup {
         bool scroll_to_bottom;
 
         void
-        progress_handler(const std::string& msg)
-        {
+        progress_handler(const std::string& msg) {
             cout << "PROGRESS: " << msg << endl;
             progress_messages.push_back(msg);
             scroll_to_bottom = true;
         }
 
         void
-        success_handler()
-        {
+        success_handler() {
             state = State::success;
             scroll_to_bottom = true;
         }
 
-        void
-        error_handler(const std::string& msg)
+        void error_handler(const std::string& msg)
         {
             cerr << "ERROR: " << msg << endl;
             error_message = msg;
@@ -78,8 +74,7 @@ namespace InstallThemePopup {
         }
 
         void
-        show_messages()
-        {
+        show_messages() {
             using namespace ImGui::RAII;
 
             // NOTE: take up all available space except for a row of buttons at the bottom.
@@ -116,14 +111,12 @@ namespace InstallThemePopup {
 
     } // namespace
 
-    void open(const std::filesystem::path &uthemePath,
-              const ThemeManager::Metadata &meta,
+    void open(const std::filesystem::path &utheme_,
+              const ThemeManager::ConstMetadataPtr &metadata_,
               bool skipConfirmation,
               bool enableTheme) {
-        create_directories(THEMES_ROOT);
-
-        utheme_path = uthemePath;
-        theme_meta = meta;
+        utheme = utheme_;
+        metadata = metadata_;
 
         if (skipConfirmation)
             state = State::start_install;
@@ -141,7 +134,7 @@ namespace InstallThemePopup {
         const auto &style = ImGui::GetStyle();
 
         ImGui::TextWrapped("Would you like to install the theme:\n%s ?",
-                           theme_meta.themeName.c_str());
+                           metadata->themeName.c_str());
 
         std::string enable_label = (PluginManager::IsShuffling() ? "Enable"s : "Apply"s)
             + " theme after installation"s;
@@ -172,8 +165,8 @@ namespace InstallThemePopup {
 
     void show_state_start_install() {
         state = State::installing;
-        ThemeManager::Install(utheme_path,
-                              theme_meta,
+        ThemeManager::Install(utheme,
+                              metadata,
                               enable_theme,
                               progress_handler,
                               success_handler,
@@ -188,7 +181,7 @@ namespace InstallThemePopup {
         ImGui::Dummy({0.0f, 0.0f});
         {
             Font title_font{nullptr, 40};
-            ImGui::TextWrapped("Installing %s...", theme_meta.themeName.c_str());
+            ImGui::TextWrapped("Installing %s...", metadata->themeName.c_str());
         }
 
         ImGui::Separator();
@@ -240,7 +233,7 @@ namespace InstallThemePopup {
         }
 
         ImGui::TextWrapped(std::format("This file is not needed anymore:\n\"{}\".",
-                                       utheme_path.filename().string()));
+                                       utheme.filename().string()));
         ImGui::TextWrapped("Would you like to delete it?");
 
         ImVec2 button_size{180, 0};
@@ -253,10 +246,10 @@ namespace InstallThemePopup {
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
 
         if (ImGui::Button("Delete", button_size)) {
-            DeletePath(utheme_path);
+            DeletePath(utheme);
             ImGui::CloseCurrentPopup();
             state = State::hidden;
-            ManageThemesScreen::refresh_local_uthemes();
+            ThemeManager::RefreshUThemes();
         }
         ImGui::SetItemDefaultFocus();
 
@@ -265,7 +258,6 @@ namespace InstallThemePopup {
         if (ImGui::Button("Keep", button_size)) {
             ImGui::CloseCurrentPopup();
             state = State::hidden;
-            ManageThemesScreen::refresh_local_uthemes();
         }
     }
 

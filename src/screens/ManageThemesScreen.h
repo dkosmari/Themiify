@@ -16,7 +16,5 @@ namespace ManageThemesScreen {
 
     void finalize();
 
-    void refresh_local_uthemes();
-
     void process_ui();
 }

@@ -145,64 +145,65 @@ namespace HomeScreen {
         ImGui::Spacing();
 
         ImGui::Text(ICON_FA_CODE " Developers:");
-
-        ImGui::Indent();
-        ImGui::BulletText("Fangal-Airbag");
-        ImGui::BulletText("AlphaCraft9658");
-        ImGui::BulletText("Daniel K. O. (dkosmari)");
-        ImGui::Unindent();
+        {
+            Indent _;
+            ImGui::BulletText("Fangal-Airbag");
+            ImGui::BulletText("AlphaCraft9658");
+            ImGui::BulletText("Daniel K. O. (dkosmari)");
+        }
 
         ImGui::Spacing();
 
         ImGui::Text(ICON_FA_PAINT_BRUSH " UI Design:");
-        ImGui::Indent();
-        ImGui::BulletText("Perrohuevo");
-        ImGui::BulletText("dewgong");
-        ImGui::BulletText("Daniel K. O. (dkosmari)");
-        ImGui::Unindent();
+        {
+            Indent _;
+            ImGui::BulletText("Perrohuevo");
+            ImGui::BulletText("dewgong");
+            ImGui::BulletText("Daniel K. O. (dkosmari)");
+        }
 
         ImGui::Spacing();
 
         ImGui::Text(ICON_FA_FONT " Fonts:");
-        ImGui::Indent();
-        ImGui::BulletText("Wii U System Font");
-        ImGui::BulletText("FontAwesome");
-        ImGui::Unindent();
+        {
+            Indent _;
+            ImGui::BulletText("Wii U System Font");
+            ImGui::BulletText("FontAwesome");
+        }
 
         ImGui::Spacing();
 
         ImGui::Text(ICON_FA_MUSIC " Music:");
-
-        ImGui::Indent();
-        ImGui::BulletText("OMORI OST - 029 Good For Health, Bad for Imagination");
-
-        ImGui::Indent();
-        ImGui::TextLink("https://www.youtube.com/watch?v=XeK_I0XQW6U");
-        ImGui::Unindent();
-
-        ImGui::Unindent();
+        {
+            Indent one;
+            ImGui::BulletText("OMORI OST - 029 Good For Health, Bad for Imagination");
+            {
+                Indent two;
+                ImGui::TextLink("https://www.youtube.com/watch?v=XeK_I0XQW6U");
+            }
+        }
 
         ImGui::Spacing();
 
         ImGui::Text(ICON_FA_GITHUB " GitHub:");
-
-        ImGui::Indent();
-        ImGui::Bullet();
-        ImGui::TextLink("https://github.com/Themiify-hb/Themiify");
-        ImGui::Unindent();
+        {
+            Indent _;
+            ImGui::Bullet();
+            ImGui::TextLink("https://github.com/Themiify-hb/Themiify");
+        }
 
         ImGui::Spacing();
 
         ImGui::Text(ICON_FA_STAR " Special thanks:");
-
-        ImGui::Indent();
-        ImGui::BulletText("Juanen100 for the StyleMiiU Aroma Plugin!");
-        ImGui::BulletText("The Theme Café Discord mods, devs and founders!");
-        ImGui::BulletText("Gatto for the incredible Theme Café docs!");
-        ImGui::BulletText("Migush and the whole Themezer team!");
-        ImGui::BulletText("All the amazing Wii U theme creators!");
-        ImGui::BulletText("And many more!");
-        ImGui::Unindent();
+        {
+            Indent _;
+            ImGui::BulletText("Juanen100 for the StyleMiiU Aroma Plugin!");
+            ImGui::BulletText("The Theme Café Discord mods, devs and founders!");
+            ImGui::BulletText("Gatto for the incredible Theme Café docs!");
+            ImGui::BulletText("Migush and the whole Themezer team!");
+            ImGui::BulletText("All the amazing Wii U theme creators!");
+            ImGui::BulletText("And many more!");
+        }
     }
 
     void process_ui() {

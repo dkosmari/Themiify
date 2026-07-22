@@ -11,26 +11,24 @@
 #include <array>
 #include <atomic>
 #include <cstdio>
-#include <filesystem>
 #include <format>
 #include <fstream>
 #include <future>
 #include <iostream>
 #include <map>
-#include <print>
 #include <ranges>
 #include <stdexcept>
-#include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
-#include <vector>
 
 #include <glaze/exceptions/json_exceptions.hpp>
 #include <glaze/json.hpp>
 #include <hips.hpp>
 #include <mocha/mocha.h>
 
+#include <sys/iosupport.h>      // GetDeviceOpTab
 #include <coreinit/systeminfo.h>
 #include <sysapp/title.h>
 
@@ -64,31 +62,9 @@ namespace ThemeManager {
 
     namespace {
 
-        // ----------------- //
-        // Type declarations //
-        // ----------------- //
-
-        enum class RefreshThemesState : unsigned {
-            idle,
-            working,
-        };
-
-        struct InstallContext {
-            const std::filesystem::path utheme_path;
-            std::optional<Metadata> metadata;
-            const bool enable_theme;
-            ProgressFunction progress_func;
-            SuccessFunction success_func;
-            ErrorFunction error_func;
-            std::filesystem::path theme_path;
-
-            InstallContext(const std::filesystem::path& utheme_path,
-                           const Metadata& metadata,
-                           bool enable_theme,
-                           ProgressFunction progress_func,
-                           SuccessFunction success_func,
-                           ErrorFunction error_func);
-        };
+        /*------------------*/
+        /* Type definitions */
+        /*------------------*/
 
         // RAII type to control Home Button Menu state.
         struct HomeButtonMenuDisabler {
@@ -119,19 +95,53 @@ namespace ThemeManager {
 
         }; // struct InstallCleaner
 
-        // ------------ //
-        // Type aliases //
-        // ------------ //
+        struct InstallContext {
+            const std::filesystem::path utheme_path;
+            ConstMetadataPtr metadata;
+            const bool enable_theme;
+            ProgressFunction progress_func;
+            SuccessFunction success_func;
+            ErrorFunction error_func;
+            std::filesystem::path theme_path;
 
-        using ThemesMap = std::map<std::filesystem::path, ConstThemePtr, IgnoreCaseLess>;
+            InstallContext(const std::filesystem::path& utheme_path,
+                           const ConstMetadataPtr& metadata,
+                           bool enable_theme,
+                           ProgressFunction progress_func,
+                           SuccessFunction success_func,
+                           ErrorFunction error_func);
+        }; // struct InstallContext
 
-        using Task = std::future<void>;
+        struct LegacyMetadataJson {
+            struct {
+                std::string themeName;
+                std::string themeAuthor;
+                std::string themeID;
+                std::string themeIDPath;
+                std::string themeVersion;
+                std::filesystem::path themeInstallPath;
+            } ThemeData;
+        };
+
+        /*--------------*/
+        /* Type aliases */
+        /*--------------*/
 
         using InstallContextPtr = std::shared_ptr<InstallContext>;
 
-        // --------- //
-        // Variables //
-        // --------- //
+        using Task = std::future<void>;
+
+        using ThemeIDMap = std::unordered_map<std::string, ConstThemePtr>;
+
+        // NOTE: for theme map, we store only the folder name of the path.
+        using ThemesMap = std::map<std::filesystem::path, ConstThemePtr, IgnoreCaseLess>;
+
+        // NOTE: for .utheme map, we store the full path.
+        using UThemesMap = std::map<std::filesystem::path, ConstMetadataPtr, IgnoreCaseLess>;
+
+        /*-----------*/
+        /* Constants */
+        /*-----------*/
 
         const std::unordered_map<std::string, std::filesystem::path> regionLangMap = {
             {"UsEn", "UsEnglish/Message/AllMessage.szs"},
@@ -149,71 +159,182 @@ namespace ThemeManager {
             {"JpJa", "JpJapanese/Message/AllMessage.szs"}
         };
 
-        thread_safe<ThemesMap> safe_themes_map;
+        const std::filesystem::path THEMES_ROOT = SD_ROOT / "wiiu/themes";
 
-        std::atomic<RefreshThemesState> refresh_themes_state{RefreshThemesState::idle};
+        /*-----------*/
+        /* Variables */
+        /*-----------*/
+
+        thread_safe<ThemeIDMap> safe_theme_id_map;
+        thread_safe<ThemesMap> safe_themes_map;
+        thread_safe<UThemesMap> safe_uthemes_map;
+
+        std::atomic_bool refresh_themes_thread_busy = false;
+        std::atomic_bool refresh_uthemes_thread_busy = false;
 
         std::jthread refresh_themes_thread;
+        std::jthread refresh_uthemes_thread;
+        std::jthread install_thread;
 
         async_queue<Task> pending_tasks;
 
-        std::jthread install_thread;
+        /*-----------------------*/
+        /* Function declarations */
+        /*-----------------------*/
 
-        // --------------------- //
-        // Function declarations //
-        // --------------------- //
+        template<typename F,
+                 typename... Args>
+        void
+        AddTask(F&& func,
+                Args&& ...args);
 
-        // TODO: keep them sorted
+        std::filesystem::path
+        CalcLegacyThumbnailPath(const std::string& themeID);
 
         void
-        TaskReportInstallProgress(InstallContextPtr ctx,
-                                  std::string msg);
-        void
-        TaskReportInstallError(InstallContextPtr ctx,
-                               std::string msg);
+        CreateCacheFile(std::ifstream &sourceFile,
+                        const std::filesystem::path &outputPath);
 
-        std::filesystem::path GetMenuContentPath();
+        void
+        ExecTasks();
+
+        std::optional<std::string>
+        GetHexId(const ConstThemePtr& theme);
+
+        std::filesystem::path
+        GetMenuContentPath();
 
         void
         InstallThread(std::stop_token stopper,
                       InstallContextPtr ctx)
             noexcept;
 
-        template<typename F,
-                 typename... Args>
-        void
-        add_task(F&& func,
-                 Args&& ...args);
+        ConstThemePtr
+        ReadInstalledTheme(const std::filesystem::path &themePath);
+
+        ConstThemePtr
+        ReadInstalledThemeLegacy(const std::filesystem::path &themePath);
+
+        // std::filesystem::path
+        // Sanitize(const std::filesystem::path& input);
+
+        std::filesystem::path
+        SanitizeElement(const std::filesystem::path& input);
 
         void
-        exec_tasks();
+        TaskCompleteInstall(const InstallContextPtr& ctx);
+
+        void
+        TaskPrintError(const std::string& msg);
+
+        void
+        TaskReportInstallError(const InstallContextPtr& ctx,
+                               const std::string& msg);
+
+        void
+        TaskReportInstallProgress(const InstallContextPtr& ctx,
+                                  const std::string& msg);
 
         std::string
         to_string(Hips::Result res);
 
+        /*----------------------*/
+        /* Function definitions */
+        /*----------------------*/
+
+        template<typename F,
+                 typename... Args>
+        void
+        AddTask(F&& func,
+                Args&& ...args) {
+            pending_tasks.push(std::async(std::launch::deferred,
+                                          std::forward<F>(func),
+                                          std::forward<Args>(args)...));
+        }
+
+        std::filesystem::path
+        CalcLegacyThumbnailPath(const std::string& themeID) {
+            std::string filename = themeID;
+            // Simply delete the ':' from the ID.
+            std::erase(filename, ':');
+            filename += ".webp";
+            return THEMIIFY_THUMBNAILS / filename;
+        }
+
         void
         CreateCacheFile(std::ifstream &sourceFile,
-                        const std::filesystem::path &outputPath);
+                        const std::filesystem::path &outputPath) {
+            if (!sourceFile.is_open()) {
+                cerr << "Invalid or unopened source file" << endl;
+                return;
+            }
 
-        // -------------------- //
-        // Function definitions //
-        // -------------------- //
+            std::size_t sourceSize = static_cast<std::size_t>(sourceFile.tellg());
+            sourceFile.seekg(0, std::ios::beg);
 
-        // TODO: keep them sorted
+            std::vector<unsigned char> buffer(sourceSize);
+            sourceFile.read(reinterpret_cast<char*>(buffer.data()), sourceSize);
 
-        InstallContext::InstallContext(const std::filesystem::path& utheme_path,
-                                       const Metadata& metadata,
-                                       bool enable_theme,
-                                       ProgressFunction progress_func,
-                                       SuccessFunction success_func,
-                                       ErrorFunction error_func) :
-            utheme_path{utheme_path},
-            metadata{metadata},
-            enable_theme{enable_theme},
-            progress_func{std::move(progress_func)},
-            success_func{std::move(success_func)},
-            error_func{std::move(error_func)}
-        {}
+            if (!sourceFile) {
+                cerr << "Error reading source file to create cache file." << endl;
+                return;
+            }
+
+            std::ofstream outputFile(outputPath, std::ios::binary | std::ios::trunc);
+            if (!outputFile.is_open()) {
+                cerr << "Failed to open output file for writing: " << outputPath << endl;
+                return;
+            }
+
+            outputFile.write(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+
+            if (!outputFile) {
+                cerr << "Error writing cache file to " << outputPath << endl;
+                return;
+            }
+
+            cout << "Successfully cached file to: " << outputPath << endl;
+        }
+
+        void
+        ExecTasks() {
+            while (auto task = pending_tasks.try_pop())
+                try {
+                    task->get();
+                }
+                catch (std::exception& e) {
+                    cerr << "ERROR in ExecTasks(): " << e.what() << endl;
+                }
+        }
+
+        std::optional<std::string>
+        GetHexId(const ConstThemePtr& theme) {
+            if (!theme->metadata.themeID)
+                return {};
+            static const std::string prefix = "Themezer:";
+            if (!theme->metadata.themeID->starts_with(prefix))
+                return {};
+            std::string result = theme->metadata.themeID->substr(prefix.size());
+            if (result.empty())
+                return {};
+            return result;
+        }
+
+        std::filesystem::path
+        GetMenuContentPath() {
+            uint64_t menuTitleID = _SYSGetSystemApplicationTitleId(SYSTEM_APP_ID_WII_U_MENU);
+
+            uint32_t menuIDParentDir = menuTitleID >> 32;
+            uint32_t menuIDChildDir = menuTitleID;
+
+            char splitMenuID[18];
+            std::snprintf(splitMenuID, sizeof splitMenuID,
+                          "%08x/%08x",
+                          menuIDParentDir,
+                          menuIDChildDir);
+
+            return "storage_mlc:/sys/title" / std::filesystem::path{splitMenuID} / "content";
+        }
 
         HomeButtonMenuDisabler::HomeButtonMenuDisabler()
             noexcept
@@ -246,49 +367,19 @@ namespace ThemeManager {
             disabled = true;
         }
 
-        void
-        TaskReportInstallError(InstallContextPtr ctx,
-                               std::string msg)
-        {
-            cerr << "TaskReportInstallError: " << msg << endl;
-            if (ctx->error_func)
-                ctx->error_func(msg);
-        }
-
-        void
-        TaskReportInstallProgress(InstallContextPtr ctx,
-                                  std::string msg)
-        {
-            cout << "TaskReportInstallProgress: " << msg << endl;
-            if (ctx->progress_func)
-                ctx->progress_func(msg);
-        }
-
-        void
-        TaskReportInstallSuccess(InstallContextPtr ctx)
-        {
-            cout << "TaskReportInstallSuccess: " << ctx->metadata->themeName << endl;
-            if (ctx->enable_theme)
-                PluginManager::Enable(ctx->theme_path);
-            if (ctx->success_func)
-                ctx->success_func();
-        }
-
-        std::filesystem::path GetMenuContentPath() {
-            uint64_t menuTitleID = _SYSGetSystemApplicationTitleId(SYSTEM_APP_ID_WII_U_MENU);
-
-            uint32_t menuIDParentDir = menuTitleID >> 32;
-            uint32_t menuIDChildDir = menuTitleID;
-
-            char splitMenuID[18];
-            snprintf(splitMenuID, sizeof splitMenuID,
-                     "%08x/%08x",
-                     menuIDParentDir,
-                     menuIDChildDir);
-
-            return "storage_mlc:/sys/title" / std::filesystem::path{splitMenuID} / "content";
-        }
-
+        InstallContext::InstallContext(const std::filesystem::path& utheme_path,
+                                       const ConstMetadataPtr& metadata,
+                                       bool enable_theme,
+                                       ProgressFunction progress_func,
+                                       SuccessFunction success_func,
+                                       ErrorFunction error_func) :
+            utheme_path{utheme_path},
+            metadata{metadata},
+            enable_theme{enable_theme},
+            progress_func{std::move(progress_func)},
+            success_func{std::move(success_func)},
+            error_func{std::move(error_func)}
+        {}
 
         void
         InstallThread(std::stop_token stopper,
@@ -310,7 +401,7 @@ namespace ThemeManager {
                                          Args&&... args)
             {
                 std::string msg = std::format(fmt, std::forward<Args>(args)...);
-                add_task(TaskReportInstallProgress, ctx, std::move(msg));
+                AddTask(TaskReportInstallProgress, ctx, std::move(msg));
             };
 
             // Helper lambda
@@ -352,7 +443,8 @@ namespace ThemeManager {
                 else if (entryName == "cafe_barista_men.bps") {
                     menuFilePath = CAFE_BARISTA_MEN_PATH;
                 }
-                else if (entryStem.starts_with(AllMessage_) && entryName.extension() == ".bps") {
+                else if (entryStem.starts_with(AllMessage_) &&
+                         as_lower_case(entryName.extension()) == ".bps") {
                     std::string regionLangStr = entryStem.substr(AllMessage_.size(), 4);
                     auto it = regionLangMap.find(regionLangStr);
                     if (it == regionLangMap.end()) {
@@ -373,7 +465,7 @@ namespace ThemeManager {
                     auto patchPath = entryName;
                     auto outputPath = themePath / "content" / menuFilePath;
 
-                    CreateParentDirectories(cachePath);
+                    create_directories(cachePath.parent_path());
 
                     auto patchFile = uthemeArchive.fopen(i);
 
@@ -446,7 +538,7 @@ namespace ThemeManager {
                     throwIfStopped();
 
                     if (result == Hips::Result::Success) {
-                        CreateParentDirectories(outputPath);
+                        create_directories(outputPath.parent_path());
 
                         throwIfStopped();
 
@@ -463,7 +555,7 @@ namespace ThemeManager {
                 else {
                     // Not a known patch: if it's not a .bps file, just copy it verbatim
                     // to themePath.
-                    if (entryName.extension() != ".bps") {
+                    if (as_lower_case(entryName.extension()) != ".bps") {
                         reportProgress("Copying file: \"{}\"", entryName.string());
                         auto patchFile = uthemeArchive.fopen(i);
                         auto outputPath = themePath / entryName;
@@ -493,42 +585,213 @@ namespace ThemeManager {
 
             throwIfStopped();
 
-            if (auto theme = ReadInstalledTheme(themePath))
-                safe_themes_map.lock()
-                    ->emplace(themePath.filename(), std::make_shared<Theme>(std::move(*theme)));
-            else
+            if (auto theme = ReadInstalledTheme(themePath)) {
+                if (auto hexId = GetHexId(theme))
+                    (*safe_theme_id_map.lock())[*hexId] = theme;
+                (*safe_themes_map.lock())[themePath.filename()] = std::move(theme);
+            } else
                 throw std::runtime_error{"Could not read metadata from installed theme!"};
 
             cleaner.disable();
 
-            add_task(TaskReportInstallSuccess, ctx);
+            AddTask(TaskCompleteInstall, std::move(ctx));
         }
         catch (std::exception& e) {
             std::string msg = e.what();
-            add_task(TaskReportInstallError, std::move(ctx), std::move(msg));
+            AddTask(TaskReportInstallError, std::move(ctx), std::move(msg));
         }
 
-        template<typename F,
-                 typename... Args>
-        void
-        add_task(F&& func,
-                 Args&& ...args)
-        {
-            pending_tasks.push(std::async(std::launch::deferred,
-                                          std::forward<F>(func),
-                                          std::forward<Args>(args)...));
+        ConstThemePtr
+        ReadInstalledTheme(const std::filesystem::path &themePath) {
+            static const std::array image_extensions{".webp", ".jpg", ".png"};
+            try {
+                auto theme = std::make_shared<Theme>();
+                theme->path = themePath;
+                try {
+                    for (auto& entry
+                             : std::filesystem::recursive_directory_iterator{theme->path}) {
+                        if (entry.is_regular_file())
+                            theme->files.push_back(entry.path());
+                    }
+                    std::ranges::sort(theme->files, IgnoreCaseLess{});
+                }
+                catch (std::exception &e) {
+                    cerr << "Error listing files inside theme. SD card may be corrupted." << endl;
+                }
+
+                static const std::array image_names{
+                    "preview-collage",
+                    "preview-launcher",
+                    "preview-warawara"
+                };
+                for (auto name : image_names) {
+                    auto preview_base = theme->path / name;
+                    for (auto ext : image_extensions) {
+                        auto preview = preview_base;
+                        preview += ext;
+                        if (exists(preview)) {
+                            theme->previews.push_back(preview);
+                            break;
+                        }
+                    }
+                }
+                MetadataJson metaJson;
+                glz::ex::read_file_json(metaJson,
+                                        (theme->path / "metadata.json").string(),
+                                        std::string{});
+                theme->metadata = std::move(metaJson.metadata);
+
+                // If there was no preview image on the theme folder, look for a cached thumbnail.
+                if (theme->path.empty() && theme->metadata.themeID) {
+                    auto preview = CalcLegacyThumbnailPath(*theme->metadata.themeID);
+                    if (exists(preview))
+                        theme->previews.push_back(preview);
+                }
+
+                return theme;
+            }
+            catch (std::exception& e) {
+                // Fallback: try to read legacy metadata.
+                return ReadInstalledThemeLegacy(themePath);
+            }
         }
 
+        ConstThemePtr
+        ReadInstalledThemeLegacy(const std::filesystem::path &themePath) {
+            // Fallback: find a json (in SD:/themiify/installed/) that matches this theme.
+            try {
+                auto theme = std::make_shared<Theme>();
+                theme->path = themePath;
+                for (auto entry
+                         : std::filesystem::directory_iterator{THEMIIFY_INSTALLED_THEMES}) {
+                    if (!entry.is_regular_file())
+                        continue;
+                    if (as_lower_case(entry.path().extension()) != ".json")
+                        continue;
+                    try {
+                        LegacyMetadataJson legacyMetaJson;
+                        glz::ex::read_file_json(legacyMetaJson,
+                                   entry.path().string(),
+                                                std::string{});
+                        auto& leg_meta = legacyMetaJson.ThemeData;
+                        if (leg_meta.themeID.empty()) // not a Themezer theme, skip it
+                            continue;
+                        if (equivalent(themePath, leg_meta.themeInstallPath)) {
+                            theme->metadata.themeID = leg_meta.themeID;
+                            theme->metadata.themeName = leg_meta.themeName;
+                            theme->metadata.themeAuthor = leg_meta.themeAuthor;
+                            theme->metadata.themeVersion = leg_meta.themeVersion;
+                            theme->legacyMetadataPath = entry.path();
+                            auto preview = CalcLegacyThumbnailPath(*theme->metadata.themeID);
+                            if (exists(preview))
+                                theme->previews.push_back(preview);
+                            return theme;
+                        }
+                    }
+                    catch (std::exception& e3) {
+                        cout << "Failed to parse " << entry.path()
+                             << ": " << e3.what() << endl;
+                    }
+                }
+                // No matching metadata found, just use the folder name as the name.
+                theme->metadata.themeName = themePath.filename();
+                return theme;
+            }
+            catch (std::exception& e2) {
+                cerr << "ERROR: while looking for themiify metadata: " << e2.what() << endl;
+                return {};
+            }
+        }
+
+#if 0
+        std::filesystem::path
+        Sanitize(const std::filesystem::path& input) {
+            std::filesystem::path output;
+            auto is_newlib_root = [](const std::filesystem::path& name) -> bool
+            {
+                return GetDeviceOpTab(name.c_str()) != nullptr;
+            };
+
+            for (auto [index, element] : input | std::views::enumerate) {
+                if (index == 0 && is_newlib_root(element))
+                    output /= element; // do not sanitize root element
+                else
+                    output /= SanitizeElement(element);
+            }
+            return output;
+        }
+#endif
+
+        std::filesystem::path
+        SanitizeElement(const std::filesystem::path& input) {
+            std::u32string output_str;
+            std::u32string input_str = input.u32string();
+            for (auto c : input_str) {
+                switch (c) {
+                    case U'/':
+                    case U'\\':
+                    case U'<':
+                    case U'>':
+                    case U':':
+                    case U'"':
+                    case U'|':
+                    case U'?':
+                    case U'*':
+                    case 127: // "DEL"
+                        output_str += U'_';
+                        break;
+                    default:
+                        // NOTE: the Wii U needs filenames encoded in Shift-JIS, but wut
+                        // does not implement any conversion. So we'll enforce ASCII-only
+                        // for now.
+                        if (c >= 32 && c < 127)
+                            output_str += c;
+                        else
+                            output_str += U'_';
+                }
+            }
+            // Do not allow it to end with '.'
+            while (output_str.ends_with(U'.'))
+                output_str.pop_back();
+            return output_str;
+        }
+
+        // Called from the main thread.
         void
-        exec_tasks()
-        {
-            while (auto task = pending_tasks.try_pop())
-                task->get();
+        TaskCompleteInstall(const InstallContextPtr& ctx) {
+            cout << "TaskCompleteInstall: " << ctx->metadata->themeName << endl;
+            if (ctx->enable_theme)
+                PluginManager::Enable(ctx->theme_path);
+            if (ctx->success_func)
+                ctx->success_func();
+        }
+
+        // Called from the main thread.
+        void
+        TaskPrintError(const std::string& msg) {
+            cerr << "ERROR: " << msg << endl;
+        }
+
+        // Called from the main thread.
+        void
+        TaskReportInstallError(const InstallContextPtr& ctx,
+                               const std::string& msg) {
+            cerr << "TaskReportInstallError: " << msg << endl;
+            if (ctx->error_func)
+                ctx->error_func(msg);
+        }
+
+        // Called from the main thread.
+        void
+        TaskReportInstallProgress(const InstallContextPtr& ctx,
+                                  const std::string& msg) {
+            cout << "TaskReportInstallProgress: " << msg << endl;
+            if (ctx->progress_func)
+                ctx->progress_func(msg);
         }
 
         std::string
-        to_string(Hips::Result res)
-        {
+        to_string(Hips::Result res) {
             switch (res) {
                 using enum Hips::Result;
                 case Success:
@@ -546,82 +809,37 @@ namespace ThemeManager {
             }
         }
 
-        void
-        CreateCacheFile(std::ifstream &sourceFile,
-                             const std::filesystem::path &outputPath)
-        {
-            if (!sourceFile.is_open()) {
-                cerr << "Invalid or unopened source file" << endl;
-                return;
-            }
-
-            std::size_t sourceSize = static_cast<std::size_t>(sourceFile.tellg());
-            sourceFile.seekg(0, std::ios::beg);
-
-            std::vector<unsigned char> buffer(sourceSize);
-            sourceFile.read(reinterpret_cast<char*>(buffer.data()), sourceSize);
-
-            if (!sourceFile) {
-                cerr << "Error reading source file to create cache file." << endl;
-                return;
-            }
-
-            std::ofstream outputFile(outputPath, std::ios::binary | std::ios::trunc);
-            if (!outputFile.is_open()) {
-                cerr << "Failed to open output file for writing: " << outputPath << endl;
-                return;
-            }
-
-            outputFile.write(reinterpret_cast<const char*>(buffer.data()), buffer.size());
-
-            if (!outputFile) {
-                cerr << "Error writing cache file to " << outputPath << endl;
-                return;
-            }
-
-            cout << "Successfully cached file to: " << outputPath << endl;
-        }
-
     } // namespace
 
+    /*------------------*/
+    /* Public functions */
+    /*------------------*/
 
-    void initialize()
-    {
+    void initialize() {
         TRACE_FUNC;
 
-        refresh_themes_thread = {};
-        refresh_themes_state = RefreshThemesState::idle;
+        create_directories(THEMES_ROOT);
 
         RefreshInstalledThemes();
 
+        RefreshUThemes();
+
         install_thread = {};
     }
 
-    void finalize()
-    {
+    void finalize() {
         TRACE_FUNC;
 
         install_thread = {};
         refresh_themes_thread = {};
+        refresh_uthemes_thread = {};
     }
 
-    void process()
-    {
-        exec_tasks();
+    void process() {
+        ExecTasks();
     }
 
-    struct LegacyMetadataJson {
-        struct {
-            std::string themeName;
-            std::string themeAuthor;
-            std::string themeID;
-            std::string themeIDPath;
-            std::string themeVersion;
-            std::string themeInstallPath;
-        } ThemeData;
-    };
-
-    std::optional<Metadata>
+    ConstMetadataPtr
     ReadUThemeMetadata(const std::filesystem::path &uthemePath)
     try {
         Zip::Archive uthemeArchive{uthemePath, ZIP_RDONLY};
@@ -634,121 +852,20 @@ namespace ThemeManager {
         uthemeArchive.close();
         MetadataJson json;
         glz::ex::read_json(json, buffer);
-        return { std::move(json.metadata) };
+        return std::make_shared<Metadata>(std::move(json.metadata));
     }
     catch (std::exception& e) {
         cerr << "ERROR: " << e.what() << endl;
         return {};
     }
 
-    std::optional<Theme>
-    ReadInstalledTheme(const std::filesystem::path &themePath)
-    {
-        static const std::array image_extensions{".webp", ".jpg", ".png"};
-        try {
-            Theme theme;
-            theme.path = themePath;
-            try {
-                for (auto& entry
-                         : std::filesystem::recursive_directory_iterator{theme.path}) {
-                    if (entry.is_regular_file())
-                        theme.files.push_back(entry.path());
-                }
-                std::ranges::sort(theme.files, IgnoreCaseLess{});
-            }
-            catch (std::exception &e) {
-                cerr << "Error listing files inside theme. SD card may be corrupted." << endl;
-            }
-
-            static const std::array image_names{
-                "preview-collage",
-                "preview-launcher",
-                "preview-warawara"
-            };
-            for (auto name : image_names) {
-                auto preview_base = theme.path / name;
-                for (auto ext : image_extensions) {
-                    auto preview = preview_base;
-                    preview += ext;
-                    if (exists(preview)) {
-                        theme.previews.push_back(preview);
-                        break;
-                    }
-                }
-            }
-            MetadataJson metaJson;
-            glz::ex::read_file_json(metaJson,
-                                    (theme.path / "metadata.json").string(),
-                                    std::string{});
-            theme.metadata = std::move(metaJson.metadata);
-
-            // If there was no preview image on the theme folder, look for a cached thumbnail.
-            if (theme.path.empty() && theme.metadata.themeID) {
-                auto preview = theme_id_to_cached_thumbnail_path(*theme.metadata.themeID);
-                if (exists(preview))
-                    theme.previews.push_back(preview);
-            }
-
-            return {std::move(theme)};
-        }
-        catch (std::exception& e) {
-            // cout << "Failed to get new theme metadata: " << e.what() << endl;
-            // Fallback: find a json (in SD:/themiify/installed/) that matches this theme.
-            try {
-                auto folder_name = themePath.filename();
-                Theme theme;
-                theme.path = themePath;
-                for (auto entry
-                         : std::filesystem::directory_iterator{THEMIIFY_INSTALLED_THEMES}) {
-                    if (!entry.is_regular_file())
-                        continue;
-                    if (entry.path().extension() != ".json")
-                        continue;
-                    try {
-                        LegacyMetadataJson legacyMetaJson;
-                        glz::ex::read_file_json(legacyMetaJson, entry.path().string(), std::string{});
-                        auto& leg_meta = legacyMetaJson.ThemeData;
-                        if (leg_meta.themeID.empty()) // not a Themezer theme, skip it
-                            continue;
-                        auto meta_folder_name = std::filesystem::path{leg_meta.themeInstallPath}.filename();
-                        if (folder_name == meta_folder_name) {
-                            theme.metadata.themeID = leg_meta.themeID;
-                            theme.metadata.themeName = leg_meta.themeName;
-                            theme.metadata.themeAuthor = leg_meta.themeAuthor;
-                            theme.metadata.themeVersion = leg_meta.themeVersion;
-                            theme.legacyMetadataPath = entry.path();
-                            auto preview =
-                                theme_id_to_cached_thumbnail_path(*theme.metadata.themeID);
-                            if (exists(preview))
-                                theme.previews.push_back(preview);
-                            return {std::move(theme)};
-                        }
-                    }
-                    catch (std::exception& e3) {
-                        cout << "Failed to parse " << entry.path()
-                             << ": " << e3.what() << endl;
-                    }
-                }
-                // No matching metadata found, just use the folder name as the name.
-                theme.metadata.themeName = folder_name;
-                return {std::move(theme)};
-            }
-            catch (std::exception& e2) {
-                cerr << "ERROR: while looking for themiify metadata: " << e2.what() << endl;
-                return {};
-            }
-            return {};
-        }
-    }
-
     void
     Install(const std::filesystem::path& utheme,
-            const Metadata& metadata,
+            const ConstMetadataPtr& metadata,
             bool enable_theme,
             ProgressFunction progress_func,
             SuccessFunction success_func,
-            ErrorFunction error_func)
-    {
+            ErrorFunction error_func) {
         auto ctx = std::make_shared<InstallContext>(utheme,
                                                     metadata,
                                                     enable_theme,
@@ -759,22 +876,27 @@ namespace ThemeManager {
     }
 
     void
-    CancelInstall()
-    {
+    CancelInstall() {
         install_thread = {};
     }
 
+    // NOTE: This takes a copy and not a reference, to keep the theme object alive while
+    // it's being erased.
+    // TODO: should run on a background thread aswell.
     void
-    Uninstall(ConstThemePtr theme)
-    {
+    Uninstall(ConstThemePtr theme) {
         PluginManager::Disable(theme->path);
+
+        if (auto hexId = GetHexId(theme))
+            safe_theme_id_map.lock()
+                ->erase(*hexId);
 
         safe_themes_map.lock()
             ->erase(theme->path.filename());
 
         // If there's a cached thumbnail, delete it.
         if (theme->metadata.themeID) {
-            auto thumbnail = theme_id_to_cached_thumbnail_path(*theme->metadata.themeID);
+            auto thumbnail = CalcLegacyThumbnailPath(*theme->metadata.themeID);
             if (exists(thumbnail))
                 DeletePath(thumbnail);
         }
@@ -791,15 +913,37 @@ namespace ThemeManager {
     }
 
     std::filesystem::path
-    CalcThemePath(const Metadata& meta)
-    {
-        return THEMES_ROOT / make_theme_folder_name(meta.themeName, meta.themeID);
+    CalcThemePath(const Metadata& meta) {
+        std::string foldername = meta.themeName;
+        if (meta.themeID) {
+            // Strip the ":" from the themeID
+            std::string clean_theme_id = *meta.themeID;
+            std::erase(clean_theme_id, ':');
+            foldername += " (" + clean_theme_id + ")";
+        }
+        return THEMES_ROOT / SanitizeElement(foldername);
+    }
+
+    std::filesystem::path
+    CalcUThemePath(const std::string& slug,
+                   const std::string& hexId) {
+        std::string filename = slug;
+        if (!hexId.empty())
+            filename += "-" + hexId;
+
+        if (filename.empty())
+            filename = "no-slug-or-id"; // TODO: generate random name?
+
+        filename += ".utheme";
+
+        return THEMES_ROOT / SanitizeElement(filename);
     }
 
     void
-    RefreshInstalledThemes()
-    {
-        refresh_themes_state = RefreshThemesState::working;
+    RefreshInstalledThemes() {
+        refresh_themes_thread = {}; // ensure any current thread is stopped
+        refresh_themes_thread_busy = true;
+        safe_theme_id_map.lock()->clear();
         safe_themes_map.lock()->clear();
         refresh_themes_thread = std::jthread{
             [](std::stop_token stopper)
@@ -807,32 +951,45 @@ namespace ThemeManager {
                 try {
                     for (auto& entry : std::filesystem::directory_iterator{THEMES_ROOT}) {
                         if (stopper.stop_requested())
-                            break;
+                            throw std::runtime_error{"thread stopped"};
                         if (!entry.is_directory())
                             continue;
-                        if (auto theme = ReadInstalledTheme(entry.path()))
+                        if (auto theme = ReadInstalledTheme(entry.path())) {
+                            if (auto hexId = GetHexId(theme))
+                                safe_theme_id_map.lock()->emplace(*hexId, theme);
                             safe_themes_map.lock()->emplace(
                                 entry.path().filename(),
-                                std::make_shared<Theme>(std::move(*theme)));
+                                std::move(theme)
+                            );
+                        }
                     }
                 }
                 catch (std::exception& e) {
-                    cerr << "ERROR in RefreshInstalledThemes(): " << e.what() << endl;
+                    // NOTE: print the error on the main thread
+                    std::string msg ="RefreshInstalledThemes() failed: "s + e.what();
+                    AddTask(TaskPrintError, std::move(msg));
                 }
-                refresh_themes_state = RefreshThemesState::idle;
+                refresh_themes_thread_busy = false;
             }
         };
     }
 
     bool
-    IsRefreshingThemes()
-    {
-        return refresh_themes_state != RefreshThemesState::idle;
+    IsRefreshingThemes() {
+        return refresh_themes_thread_busy;
+    }
+
+    ConstThemePtr
+    GetThemeByID(const std::string& hexId) {
+        auto theme_id_map = safe_theme_id_map.lock();
+        auto it = theme_id_map->find(hexId);
+        if (it == theme_id_map->end())
+            return {};
+        return it->second;
     }
 
     void
-    ForEachInstalledTheme(const ThemeFunction& func)
-    {
+    ForEachInstalledTheme(const ThemeFunction& func) {
         auto themes = safe_themes_map.lock();
         for (auto [index, path_theme] : *themes | std::views::enumerate)
             func(index, path_theme.second);
@@ -840,8 +997,7 @@ namespace ThemeManager {
 
     ConstThemePtr
     GetCurrentTheme()
-        noexcept
-    {
+        noexcept {
         auto name = PluginManager::GetCurrentTheme();
         if (name.empty())
             return {};
@@ -850,6 +1006,50 @@ namespace ThemeManager {
         if (it == themes->end())
             return {};
         return it->second;
+    }
+
+    void
+    RefreshUThemes() {
+        refresh_uthemes_thread = {}; // ensure any current thread is stopped
+        refresh_uthemes_thread_busy = true;
+        safe_uthemes_map.lock()->clear();
+        refresh_uthemes_thread = std::jthread{
+            [](std::stop_token stopper)
+            {
+                try {
+                    for (auto& entry : std::filesystem::directory_iterator{THEMES_ROOT}) {
+                        if (stopper.stop_requested())
+                            throw std::runtime_error{"thread stopped"};
+                        if (!entry.is_regular_file())
+                            continue;
+                        if (as_lower_case(entry.path().extension()) != ".utheme")
+                            continue;
+                        safe_uthemes_map.lock()->emplace(
+                            entry.path(), // NOTE: use full path
+                            ReadUThemeMetadata(entry.path())
+                        );
+                    }
+                }
+                catch (std::exception& e) {
+                    // NOTE: print the error on the main thread
+                    std::string msg ="RefreshUThemes() failed: "s + e.what();
+                    AddTask(TaskPrintError, std::move(msg));
+                }
+                refresh_uthemes_thread_busy = false;
+            }
+        };
+    }
+
+    bool
+    IsRefreshingUThemes() {
+        return refresh_uthemes_thread_busy;
+    }
+
+    void
+    ForEachUTheme(const MetadataFunction& func) {
+        auto uthemes = safe_uthemes_map.lock();
+        for (auto [index, path_meta] : *uthemes | std::views::enumerate)
+            func(index, path_meta.first, path_meta.second);
     }
 
 } // namespace ThemeManager

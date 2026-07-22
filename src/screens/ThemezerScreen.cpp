@@ -2,7 +2,7 @@
  * Themiify - A theme manager for the Nintendo Wii U
  * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
- * Copyright (C) 2026  Daniel K. O. <dkosmari>
+ * Copyright (C) 2026 Daniel K. O. <dkosmari>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -23,15 +23,17 @@
 #include <SDL2/SDL_image.h>
 
 #include "ThemezerScreen.h"
-#include "ThemeDetailsPopup.h"
+
+#include "../DownloadManager.h"
+#include "../IconsFontAwesome4.h"
+#include "../ImageLoader.h"
+#include "../ThemeManager.h"
+#include "../ThemezerAPI.h"
+#include "../utils.h"
 #include "DownloadThemePopup.h"
 #include "InstallThemePopup.h"
 #include "QRCodePopup.h"
-#include "../utils.h"
-#include "../ImageLoader.h"
-#include "../ThemezerAPI.h"
-#include "../DownloadManager.h"
-#include "../IconsFontAwesome4.h"
+#include "ThemeDetailsPopup.h"
 
 // Define this to help seeing the padding and spacing values for windows.
 // #define DEBUG_BG_COLOR
@@ -213,21 +215,53 @@ namespace ThemezerScreen {
             ImGui::Image((ImTextureID)img, img_size);
         }
 
+
         {
+            // Show theme name to the left, status glyph to the right.
             Font font{nullptr, 24};
-            text_limited(inner_size.x, theme.name);
+
+            std::string status_label;
+            ImVec4 status_color;
+            if (auto itheme = ThemeManager::GetThemeByID(theme.hexId)) {
+                if (itheme->metadata.themeVersion &&
+                    itheme->metadata.themeVersion != theme.updatedAt) {
+                    status_label = ICON_FA_REFRESH;
+                    status_color = { 1.0f, 0.7f, 0.0f, 1.0f };
+                } else {
+                    status_label = ICON_FA_CHECK;
+                    status_color = { 0.0f, 1.0f, 0.3f, 1.0f };
+                }
+            }
+
+            float name_width = inner_size.x;
+            if (!status_label.empty())
+                name_width -= style.ItemSpacing.x + ImGui::CalcTextSize(status_label).x;
+
+            text_limited(name_width, theme.name);
+
+            if (!status_label.empty()) {
+                ImGui::SameLine();
+
+                std::optional<StyleColor> status_glyph_color;
+                if (!dark_text)
+                    status_glyph_color.emplace(ImGuiCol_Text, status_color);
+                ImGui::Text(status_label);
+            }
         }
 
         {
-            // Show author aligned to the left, downloads to the right.
+            // Show author to the left, downloads to the right.
             Font font{nullptr, 18};
+
             std::string downloads_label = ICON_FA_DOWNLOAD " "
                 + std::to_string(theme.downloadCount);
             float downloads_width = ImGui::CalcTextSize(downloads_label).x;
+
             float author_width = inner_size.x - downloads_width - style.ItemSpacing.x;
             text_limited(author_width, "by " + theme.creator.username);
+
             ImGui::SameLine();
-            ImGui::SetCursorPosX(inner_size.x - downloads_width);
+
             ImGui::Text(downloads_label);
         }
     }

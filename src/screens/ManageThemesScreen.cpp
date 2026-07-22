@@ -46,9 +46,7 @@ namespace ManageThemesScreen {
 
     Tab current_tab = Tab::manage_installed;
 
-    std::vector<std::filesystem::path> local_uthemes;
-    bool local_uthemes_needs_refresh = true;
-
+    // NOTE: keep a copy of the themes so we can easily filter and reorder them.
     std::vector<ThemeManager::ConstThemePtr> installed_themes;
 
     SDL_Renderer *manage_renderer;
@@ -88,21 +86,8 @@ namespace ManageThemesScreen {
         return score;
     }
 
-    void scan_local_uthemes() {
-        local_uthemes.clear();
-
-        for (auto& entry : std::filesystem::directory_iterator(THEMES_ROOT)) {
-            if (entry.is_regular_file() && entry.path().extension() == ".utheme") {
-                local_uthemes.push_back(entry.path());
-            }
-        }
-        std::ranges::sort(local_uthemes, {}, as_lower_case);
-    }
-
     void initialize(SDL_Renderer *renderer) {
         TRACE_FUNC;
-        create_directories(THEMES_ROOT);
-        create_directories(THEMIIFY_INSTALLED_THEMES);
         manage_renderer = renderer;
         installed_themes.clear();
     }
@@ -110,11 +95,6 @@ namespace ManageThemesScreen {
     void finalize() {
         TRACE_FUNC;
         installed_themes.clear();
-    }
-
-    void refresh_local_uthemes()
-    {
-        local_uthemes_needs_refresh = true;
     }
 
     static void text_limited(float width, const std::string& text) {
@@ -225,10 +205,11 @@ namespace ManageThemesScreen {
             ThemeDetailsPopup::open_local(theme);
     }
 
-    void show_utheme(const std::filesystem::path& utheme_path) {
+    void show_utheme(const std::filesystem::path& utheme,
+                     const ThemeManager::ConstMetadataPtr& metadata) {
         using namespace ImGui::RAII;
 
-        Child theme_frame{utheme_path.string(),
+        Child theme_frame{utheme.string(),
                           {0, 0},
                           ImGuiChildFlags_NavFlattened |
                           ImGuiChildFlags_AutoResizeY |
@@ -241,39 +222,41 @@ namespace ManageThemesScreen {
         const auto &style = ImGui::GetStyle();
 
         const std::string install_label = ICON_FA_COGS " Install";
-        const std::string remove_label = ICON_FA_TRASH;
-
         auto install_size = ImGui::CalcTextSize(install_label) + 2 * style.FramePadding;
-        auto remove_size = ImGui::CalcTextSize(remove_label) + 2 * style.FramePadding;
+        const std::string delete_label = ICON_FA_TRASH " Delete";
+        auto delete_size = ImGui::CalcTextSize(delete_label) + 2 * style.FramePadding;
 
-        const float text_wrap_pos =
-            ImGui::GetCursorPosX()
-            + ImGui::GetContentRegionAvail().x
+        // Use a common button size, make it prettier when it lines up.
+        const ImVec2 button_size = {
+            std::fmax(install_size.x, delete_size.x),
+            std::fmax(install_size.y, delete_size.y)
+        };
+
+        const float filename_width =
+            ImGui::GetContentRegionAvail().x
             - style.ItemSpacing.x
-            - install_size.x
-            - style.ItemSpacing.x
-            - remove_size.x;
-        {
-            TextWrapPos wrap_at{text_wrap_pos};
-            ImGui::AlignTextToFramePadding();
-            ImGui::Text(utheme_path.filename().string());
-        }
+            - button_size.x;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextAligned(0, filename_width, utheme.filename().string());
 
         ImGui::SameLine();
 
-        ImGui::SetCursorPosX(text_wrap_pos + style.ItemSpacing.x);
+        if (ImGui::Button(install_label, button_size))
+            InstallThemePopup::open(utheme, metadata, false, true);
 
-        if (ImGui::Button(install_label, install_size)) {
-            if (auto meta = ThemeManager::ReadUThemeMetadata(utheme_path))
-                InstallThemePopup::open(utheme_path, *meta, false, true);
-        }
+
+        const float name_width =
+            ImGui::GetContentRegionAvail().x
+            - style.ItemSpacing.x
+            - button_size.x;
+        ImGui::AlignTextToFramePadding();
+        const std::string name_text = metadata ? metadata->themeName : "<NO METADATA>";
+        ImGui::TextAligned(0, name_width, name_text);
 
         ImGui::SameLine();
 
-        if (ImGui::Button(remove_label, remove_size)) {
-            DeletePath(utheme_path);
-            refresh_local_uthemes();
-        }
+        if (ImGui::Button(delete_label, button_size))
+            DeletePath(utheme);
     }
 
     void show_tab_manage_installed() {
@@ -355,8 +338,9 @@ namespace ManageThemesScreen {
 
         ImGui::SameLine();
 
+        const bool refreshing = ThemeManager::IsRefreshingThemes();
         {
-            Disabled if_refreshing{ThemeManager::IsRefreshingThemes()};
+            Disabled if_refreshing{refreshing};
             if (ImGui::Button(refresh_label))
                 ThemeManager::RefreshInstalledThemes();
         }
@@ -396,8 +380,7 @@ namespace ManageThemesScreen {
         // To keep the search widget visible, put the search results inside
         // another child.
         if (Child search_results{"ThemeGrid"}) {
-
-            Disabled if_refreshing{ThemeManager::IsRefreshingThemes()};
+            Disabled if_refreshing{refreshing};
 
             const ImVec2 grid_start_pos = ImGui::GetCursorPos();
             const ImVec2 inner_size = {320, 260};
@@ -418,17 +401,48 @@ namespace ManageThemesScreen {
     }
 
     void show_tab_install_local() {
-        ImGui::Text("Install .utheme files from sd:/wiiu/themes here.");
+        using namespace ImGui::RAII;
+
+        const auto& style = ImGui::GetStyle();
+
+        const std::string refresh_label = ICON_FA_REFRESH;
+        const float refresh_width =
+            ImGui::CalcTextSize(refresh_label).x +
+            2 * style.FramePadding.x;
+
+        const float text_width =
+            ImGui::GetContentRegionAvail().x
+            - style.ItemSpacing.x
+            - refresh_width;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextAligned(0.0f,
+                           text_width,
+                           "Install .utheme files from SD:/wiiu/themes");
+
+        ImGui::SameLine();
+
+        const bool refreshing = ThemeManager::IsRefreshingUThemes();
+
+        {
+            Disabled if_refreshing{refreshing};
+            if (ImGui::Button(refresh_label))
+                ThemeManager::RefreshUThemes();
+        }
 
         ImGui::Separator();
 
-        if (local_uthemes_needs_refresh) {
-            scan_local_uthemes();
-            local_uthemes_needs_refresh = false;
+        // To keep the refresh button visible, put the uthemes in another child.
+        if (Child uthemes_list{"uthemes_list"}) {
+            Disabled if_refreshing{refreshing};
+            ThemeManager::ForEachUTheme(
+                [](std::size_t,
+                   const std::filesystem::path& utheme,
+                   const ThemeManager::ConstMetadataPtr& meta)
+                {
+                    show_utheme(utheme, meta);
+                }
+            );
         }
-
-        for (const auto& utheme_path : local_uthemes)
-            show_utheme(utheme_path);
     }
 
     void process_ui() {
@@ -466,7 +480,6 @@ namespace ManageThemesScreen {
                                       0,
                                       {tab_width, tab_height})) {
                     current_tab = Tab::install_local;
-                    refresh_local_uthemes();
                 }
 
                 ImGui::Separator();

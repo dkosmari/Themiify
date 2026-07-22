@@ -13,13 +13,15 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
-#include <stop_token>
 #include <string>
-#include <unordered_set>
 #include <vector>
 #include <memory>
 
 namespace ThemeManager {
+
+    /*------------------*/
+    /* Type definitions */
+    /*------------------*/
 
     struct Metadata {
         std::optional<std::string> themeID;
@@ -35,6 +37,13 @@ namespace ThemeManager {
         std::filesystem::path              legacyMetadataPath;
         std::vector<std::filesystem::path> files;
     };
+
+    /*--------------*/
+    /* Type aliases */
+    /*--------------*/
+
+    using MetadataPtr = std::shared_ptr<Metadata>;
+    using ConstMetadataPtr = std::shared_ptr<const Metadata>;
 
     using ThemePtr = std::shared_ptr<Theme>;
     using ConstThemePtr = std::shared_ptr<const Theme>;
@@ -52,20 +61,27 @@ namespace ThemeManager {
                                          const ConstThemePtr& theme);
     using ThemeFunction = std::function<ThemeCallbackSignature>;
 
+    using MetadataCallbackSignature = void(std::size_t index,
+                                           const std::filesystem::path& utheme,
+                                           const ConstMetadataPtr& meta);
+    using MetadataFunction = std::function<MetadataCallbackSignature>;
+
+    /*-----------------------*/
+    /* Function declarations */
+    /*-----------------------*/
 
     void initialize();
+
     void finalize();
+
     void process();
 
-    std::optional<Metadata>
+    ConstMetadataPtr
     ReadUThemeMetadata(const std::filesystem::path &uthemePath);
-
-    std::optional<Theme>
-    ReadInstalledTheme(const std::filesystem::path &themePath);
 
     void
     Install(const std::filesystem::path& utheme,
-            const Metadata& metadata,
+            const ConstMetadataPtr& metadata,
             bool enable_theme,
             ProgressFunction progress_func,
             SuccessFunction success_func,
@@ -80,11 +96,18 @@ namespace ThemeManager {
     std::filesystem::path
     CalcThemePath(const Metadata& meta);
 
+    std::filesystem::path
+    CalcUThemePath(const std::string& slug,
+                   const std::string& hexId);
+
     void
     RefreshInstalledThemes();
 
     bool
     IsRefreshingThemes();
+
+    ConstThemePtr
+    GetThemeByID(const std::string& hexId);
 
     void
     ForEachInstalledTheme(const ThemeFunction& func);
@@ -92,5 +115,14 @@ namespace ThemeManager {
     ConstThemePtr
     GetCurrentTheme()
         noexcept;
+
+    void
+    RefreshUThemes();
+
+    bool
+    IsRefreshingUThemes();
+
+    void
+    ForEachUTheme(const MetadataFunction& func);
 
 } // namespace ThemeManager

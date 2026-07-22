@@ -57,7 +57,7 @@ struct glz::meta<PluginManager::Config> {
             // Keep them sorted on the JSON.
             std::vector<std::string> sorted{self.enabledThemes.begin(),
                                             self.enabledThemes.end()};
-            std::ranges::sort(sorted, {}, as_lower_case);
+            std::ranges::sort(sorted, IgnoreCaseLess{});
             result = join(sorted, "|");
         } else {
             if (!self.enabledThemes.empty())

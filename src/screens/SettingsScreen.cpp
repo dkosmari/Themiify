@@ -11,7 +11,9 @@
 #include "SettingsPopup.h"
 #include "../NavBar.h"
 #include "../PluginManager.h"
+#include "../ThemeManager.h"
 #include "../utils.h"
+#include "../tracer.hpp"
 
 #include <iostream>
 
@@ -20,18 +22,17 @@
 #include <imgui.h>
 #include <imgui_raii.h>
 
-#include <glaze/glaze.hpp>
+#include <glaze/exceptions/json_exceptions.hpp>
+#include <glaze/json.hpp>
 
 // Define this to help seeing the padding and spacing values for windows.
 // #define DEBUG_BG_COLOR
 
 using std::cout;
+using std::cerr;
 using std::endl;
 
 namespace SettingsScreen {
-    int volume;
-    bool isFirstBoot;
-    bool checkIntegrityAtBoot;
     bool bootIntegrityCheckPending;
 
     // Will expand and add more stuff
@@ -46,36 +47,25 @@ namespace SettingsScreen {
     const std::filesystem::path settings_path = THEMIIFY_ROOT / "settings.json";
 
     void save_settings() {
-        create_directories(THEMIIFY_ROOT);
-
-        auto json = glz::write<glz::opts{.prettify = true}>(settings);
-
-        if (!json) {
-            cout << "Failed to serialize settings" << endl;
-            return;
+        TRACE_FUNC;
+        try {
+            create_directories(THEMIIFY_ROOT);
+            glz::ex::write_file_json<glz::opts{.prettify = true}>(settings,
+                                                                  settings_path.string(),
+                                                                  std::string{});
         }
-
-        std::ofstream file(settings_path, std::ios::trunc);
-        if (!file.is_open()) {
-            cout << "Failed to open settings file" << endl;
-            return;
+        catch (std::exception& e) {
+            cerr << "ERROR saving settings: " << e.what() << endl;
         }
-
-        file << *json;
     }
 
     void load_settings() {
-        std::ifstream file(settings_path);
-        if (!file.is_open())
-            return;
-
-        std::string json{
-            std::istreambuf_iterator<char>{file},
-            std::istreambuf_iterator<char>{}
-        };
-
-        if (auto err = glz::read_json(settings, json)) {
-            cout << "Failed to parse settings" << endl;
+        TRACE_FUNC;
+        try {
+            glz::ex::read_file_json(settings, settings_path.string(), std::string{});
+        }
+        catch (std::exception& e) {
+            cerr << "ERROR loading settings: " << e.what() << endl;
         }
     }
 
@@ -87,7 +77,7 @@ namespace SettingsScreen {
     }
 
     void run_first_boot_check() {
-        if (!isFirstBoot)
+        if (!settings.is_first_boot)
             return;
 
         SettingsPopup::open(SettingsPopup::OpenState::force_integrity);
@@ -95,7 +85,7 @@ namespace SettingsScreen {
         settings.is_first_boot = false;
         save_settings();
 
-        isFirstBoot = false;
+        settings.is_first_boot = false;
     }
 
     void run_boot_integrity_check() {
@@ -108,20 +98,21 @@ namespace SettingsScreen {
     }
 
     void initialize(SDL_Renderer * /*renderer*/) {
-        cout << "Hello from SettingsScreen init!" << endl;
+        TRACE_FUNC;
+
+        create_directories(THEMIIFY_ROOT);
 
         load_settings();
 
-        isFirstBoot = settings.is_first_boot;
-        checkIntegrityAtBoot = settings.check_integrity_at_boot;
         bootIntegrityCheckPending = settings.check_integrity_at_boot;
-        volume = settings.music_volume;
-        int mix_volume = (volume * MIX_MAX_VOLUME) / 100;
+        int mix_volume = (settings.music_volume * MIX_MAX_VOLUME) / 100;
         Mix_VolumeMusic(mix_volume);
     }
 
     void finalize() {
-        cout << "Hello from SettingsScreen finalize" << endl;
+        TRACE_FUNC;
+
+        save_settings();
     }
 
     void process_ui() {
@@ -154,26 +145,17 @@ namespace SettingsScreen {
 
         ImGui::SeparatorText("Special files");
 
-        // ImGui::Spacing();
-
         if (ImGui::Button("Check integrity of Wii U Menu files")) {
             SettingsPopup::open(SettingsPopup::OpenState::integrity);
         }
 
         ImGui::SameLine();
 
-        if (ImGui::Checkbox("Check at every boot", &checkIntegrityAtBoot)) {
-            settings.check_integrity_at_boot = checkIntegrityAtBoot;
-            save_settings();
-        }
-
-        // ImGui::Spacing();
+        ImGui::Checkbox("Check at every boot", settings.check_integrity_at_boot);
 
         if (ImGui::Button("Dump Wii U Menu files")) {
             SettingsPopup::open(SettingsPopup::OpenState::dump);
         }
-
-        // ImGui::Spacing();
 
         if (ImGui::Button("Clear Themiify cache")) {
             SettingsPopup::open(SettingsPopup::OpenState::cache);
@@ -182,19 +164,15 @@ namespace SettingsScreen {
         ImGui::SeparatorText("Sound options");
 
         ImGui::Text("Background music volume level:");
-        if (ImGui::SliderInt("##volume", &volume, 0, 100, "%d%%")) {
-            settings.music_volume = volume;
+        if (ImGui::SliderInt("##volume", &settings.music_volume, 0, 100, "%d%%")) {
 
-            int mix_volume = (volume * MIX_MAX_VOLUME) / 100;
+            int mix_volume = (settings.music_volume * MIX_MAX_VOLUME) / 100;
             Mix_VolumeMusic(mix_volume);
-
-            save_settings();
         }
-
 
         ImGui::SeparatorText("StyleMiiU options");
 
-        if (auto cfg= PluginManager::GetConfig()) {
+        if (auto cfg = PluginManager::GetConfig()) {
 
             ImGui::Checkbox("Enable plugin", cfg->themeManagerEnabled);
             ImGui::SetItemTooltip("Set \"themeManagerEnabled\"");
@@ -210,9 +188,34 @@ namespace SettingsScreen {
             ImGui::Checkbox("Show notifications", cfg->showNotification);
             ImGui::SetItemTooltip("Set \"showNotification\"");
 
-            // TODO: show list of enabled themes
+            ImGui::Text("Enabled themes:");
+            {
+                Indent _;
+                const ImVec2 themes_size = {
+                    0,
+                    5 * ImGui::GetTextLineHeightWithSpacing()
+                };
+                if (Child enabled_themes{"enabled_themes",
+                                         themes_size,
+                                         ImGuiChildFlags_Borders}) {
+                    auto available_width = ImGui::GetContentRegionAvail().x;
+                    ItemWidth set_width{available_width};
+                    ThemeManager::ForEachInstalledTheme(
+                        [](std::size_t, const ThemeManager::ConstThemePtr& theme)
+                        {
+                            bool enabled = PluginManager::IsEnabled(theme->path);
+                            if (ImGui::Checkbox(theme->path.filename().string(), enabled)) {
+                                if (enabled)
+                                    PluginManager::Enable(theme->path);
+                                else
+                                    PluginManager::Disable(theme->path);
+                            }
+                        }
+                    );
+                }
+            }
 
-            if (ImGui::Button("Change enabled themes..."))
+            if (ImGui::Button("Manage installed themes..."))
                 NavBar::set_current_tab(NavBar::Tab::manage_themes);
             ImGui::SetItemTooltip("Set \"enabledThemes\"");
 
