@@ -224,8 +224,7 @@ namespace ThemezerScreen {
             ImVec4 status_color;
             if (auto itheme = ThemeManager::GetThemeByID(theme.hexId)) {
                 // If version mismatch OR it's a legacy theme, suggest an update.
-                if ((itheme->metadata.themeVersion &&
-                     itheme->metadata.themeVersion != theme.updatedAt)
+                if (itheme->metadata.themeVersion != theme.updatedAt
                     ||
                     !itheme->legacyMetadataPath.empty()) {
                     status_label = ICON_FA_REFRESH;
