@@ -29,6 +29,7 @@
 #include "../ImageLoader.h"
 #include "../ThemeManager.h"
 #include "../ThemezerAPI.h"
+#include "../tracer.hpp"
 #include "../utils.h"
 #include "DownloadThemePopup.h"
 #include "InstallThemePopup.h"
@@ -146,25 +147,20 @@ namespace ThemezerScreen {
     }
 
     void initialize(SDL_Renderer* renderer) {
-
-        cout << "Hello from ThemezerScreen init!" << endl;
+        TRACE_FUNC;
 
         themezer_logo = IMG_LoadTexture(renderer, "fs:/vol/content/ui/themezer-logo.png");
 
         first_fetch = true;
-
-        QRCodePopup::initialize();
     }
 
     void finalize() {
-        QRCodePopup::finalize();
+        TRACE_FUNC;
 
         if (themezer_logo) {
             SDL_DestroyTexture(themezer_logo);
             themezer_logo = nullptr;
         }
-
-        cout << "Hello from ThemezerScreen finalize!" << endl;
     }
 
     static void text_limited(float width, const std::string& text) {
@@ -277,14 +273,14 @@ namespace ThemezerScreen {
 
         const bool themezer_busy = ThemezerAPI::is_busy();
 
-        /*-----------------------------------------------------------------------.
-        | Layout:                                                                |
-        |                                                                        |
-        | [SEARCH-BOX] [QR] [SORT] [REVERSE] [NAV-PREV] [NAV-PAGE] [NAV-NEXT]    |
-        |                                                                        |
-        | Only the search box is stretched, so we need to calculate the width of |
-        | everything that comes after.                                           |
-        `-----------------------------------------------------------------------*/
+        /*------------------------------------------------------------------------------.
+        | Layout:                                                                       |
+        |                                                                               |
+        | [SEARCH-BOX] [QR] [SORT] [REVERSE] [NAV-PREV] [NAV-PAGE] [NAV-NEXT]           |
+        |                                                                               |
+        | Only SEARCH-BOX is stretched, so we need to calculate the width of everything |
+        | that comes after.                                                             |
+        `------------------------------------------------------------------------------*/
 
         const std::string qr_label = ICON_FA_QRCODE;
         const auto qr_size = ImGui::CalcTextSize(qr_label) + 2 * style.FramePadding;
@@ -525,10 +521,10 @@ namespace ThemezerScreen {
             }
         }
 
-        ThemeDetailsPopup::process_ui();
         DownloadThemePopup::process_ui();
         InstallThemePopup::process_ui();
         QRCodePopup::process_ui();
+        ThemeDetailsPopup::process_ui();
 
         if (first_fetch) {
             fetch_page(1);

@@ -19,6 +19,7 @@
 #include "ThemezerAPI.h"
 #include "timer.hpp"
 #include "utils.h"
+#include "screens/QRCodePopup.h"
 
 #include <chrono>
 #include <fstream>
@@ -247,6 +248,8 @@ namespace App {
         Camera::initialize(renderer);
         Camera::open();
 
+        QRCodePopup::initialize();
+
         PluginManager::initialize();
         ThemeManager::initialize();
 
@@ -293,6 +296,8 @@ namespace App {
         PluginManager::finalize();
         ImageLoader::finalize();
         DownloadManager::finalize();
+
+        QRCodePopup::finalize();
 
         Camera::close();
         Camera::shutdown();

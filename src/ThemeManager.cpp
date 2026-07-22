@@ -933,7 +933,7 @@ namespace ThemeManager {
         auto today = std::chrono::floor<std::chrono::days>(now);
         std::chrono::year_month_day date = today;
         std::chrono::hh_mm_ss time{now - today};
-        std::string filename = std::format("downloaded-{}-{}.utheme", date, time);
+        std::string filename = std::format("download-{}-{}.utheme", date, time);
         return THEMES_ROOT / SanitizeElement(filename);
     }
 

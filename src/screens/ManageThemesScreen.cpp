@@ -27,7 +27,9 @@
 #include "../tracer.hpp"
 #include "../utils.h"
 #include "DeleteThemePopup.h"
+#include "DownloadThemePopup.h"
 #include "InstallThemePopup.h"
+#include "QRCodePopup.h"
 #include "ThemeDetailsPopup.h"
 
 // Define this to help seeing the padding and spacing values for windows.
@@ -407,19 +409,37 @@ namespace ManageThemesScreen {
 
         const auto& style = ImGui::GetStyle();
 
-        const std::string refresh_label = ICON_FA_REFRESH;
-        const float refresh_width =
-            ImGui::CalcTextSize(refresh_label).x +
-            2 * style.FramePadding.x;
+        /*---------------------------------------------------------------------------.
+        | Toolbar:                                                                   |
+        |                                                                            |
+        | [INFO-TEXT] [QR] [REFRESH]                                                 |
+        |                                                                            |
+        | The INFO-TEXT is stretched, so we need to calculate the width of the rest. |
+        `---------------------------------------------------------------------------*/
 
-        const float text_width =
+        const std::string qr_label = ICON_FA_QRCODE;
+        const auto qr_size = ImGui::CalcTextSize(qr_label) + 2 * style.FramePadding;
+        const std::string refresh_label = ICON_FA_REFRESH;
+        const auto refresh_size = ImGui::CalcTextSize(refresh_label) + 2 * style.FramePadding;
+
+        const float space = style.ItemSpacing.x;
+
+        const float info_width =
             ImGui::GetContentRegionAvail().x
-            - style.ItemSpacing.x
-            - refresh_width;
+            - space
+            - qr_size.x
+            - space
+            - refresh_size.x;
+
         ImGui::AlignTextToFramePadding();
         ImGui::TextAligned(0.0f,
-                           text_width,
+                           info_width,
                            "Install .utheme files from SD:/wiiu/themes");
+
+        ImGui::SameLine();
+
+        if (ImGui::Button(qr_label, qr_size))
+            QRCodePopup::open();
 
         ImGui::SameLine();
 
@@ -505,9 +525,11 @@ namespace ManageThemesScreen {
             }
         }
 
-        ThemeDetailsPopup::process_ui();
-        InstallThemePopup::process_ui();
         DeleteThemePopup::process_ui();
+        DownloadThemePopup::process_ui();
+        InstallThemePopup::process_ui();
+        QRCodePopup::process_ui();
+        ThemeDetailsPopup::process_ui();
     }
 
 }
