@@ -12,7 +12,11 @@
 #include "../ThemezerAPI.h"
 
 namespace DownloadThemePopup {
+
     void open(const ThemezerAPI::WiiuThemeSmall &theme_data);
 
+    void open(const std::string& url);
+
     void process_ui();
-}
+
+} // namespace DownloadThemePopup

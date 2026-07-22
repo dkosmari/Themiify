@@ -2,14 +2,16 @@
  * Themiify - A theme manager for the Nintendo Wii U
  * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
- * Copyright (C) 2026  Daniel K. O. <dkosmari>
+ * Copyright (C) 2026 Daniel K. O. <dkosmari>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #include "QRCodePopup.h"
-#include "ThemezerScreen.h"
+
 #include "../Camera.h"
+#include "../tracer.hpp"
+#include "DownloadThemePopup.h"
 
 #include <iostream>
 #include <cstring>
@@ -24,131 +26,144 @@
 #include <quirc.h>
 
 using std::cout;
+using std::cerr;
 using std::endl;
 using namespace std::literals;
 
 namespace QRCodePopup {
-    enum class State {
-        hidden,
-        shown,
-    };
 
-    bool popup_queued;
-    State state;
-    const std::string popup_id = "QRCodePopup"s;
+    namespace {
 
-    static quirc* qr = nullptr;
-    static std::string last_qr_payload;
-    static int scan_frame_counter = 0;
+        enum class State {
+            hidden,
+            queued,
+            visible,
+        };
 
-    Mix_Chunk *qr_scan_sfx;
+        State state;
+        const std::string popup_id = "QRCodePopup"s;
 
-    static void initialize_qr_scanner() {
-        if (qr)
-            return;
+        quirc* qr = nullptr;
+        unsigned scan_frame_counter;
+        const unsigned scan_frame_every = 4;
 
-        qr = quirc_new();
+        Mix_Chunk *scan_sound;
 
-        if (!qr) {
-            cout << "quirc_new failed" << endl;
-            return;
-        }
+        void
+        start_scan() {
+            TRACE_FUNC;
 
-        if (quirc_resize(qr, Camera::get_width(), Camera::get_height()) < 0) {
-            cout << "quirc_resize failed" << endl;
-            quirc_destroy(qr);
-            qr = nullptr;
-        }
-    }
+            if (qr)
+                return;
 
-    static void scan_qr_code() {
-        if (!qr)
-            return;
+            qr = quirc_new();
 
-        const uint8_t* gray = Camera::get_grayscale_buffer();
+            if (!qr) {
+                cerr << "quirc_new failed" << endl;
+                return;
+            }
 
-        if (!gray)
-            return;
-
-        int w = 0;
-        int h = 0;
-
-        uint8_t* image = quirc_begin(qr, &w, &h);
-
-        if (!image)
-            return;
-
-        for (int y = 0; y < Camera::get_height(); y++) {
-            std::memcpy(
-                image + y * Camera::get_width(),
-                gray + y * Camera::get_pitch(),
-                Camera::get_width()
-            );
-        }
-
-        quirc_end(qr);
-
-        int count = quirc_count(qr);
-
-        for (int i = 0; i < count; i++) {
-            quirc_code code {};
-            quirc_data data {};
-
-            quirc_extract(qr, i, &code);
-
-            quirc_decode_error_t err = quirc_decode(&code, &data);
-
-            if (err == QUIRC_SUCCESS) {
-                last_qr_payload = reinterpret_cast<const char*>(data.payload);
-
-                cout << "QR " << last_qr_payload << endl;
-                Mix_PlayChannel(-1, qr_scan_sfx, 0);
-
-                std::string hex_id;
-
-                if (last_qr_payload.find("/wiiu/themes/") != std::string::npos) {
-                    std::size_t start = last_qr_payload.find("/themes/");
-
-                    if (start != std::string::npos) {
-                        start += 8;
-
-                        std::size_t end = last_qr_payload.find('/', start);
-
-                        if (end != std::string::npos) {
-                            hex_id = last_qr_payload.substr(start, end - start);
-                        }
-                    }
-                }
-
-                std::cout << hex_id << std::endl;
-
-                ImGui::CloseCurrentPopup();
-                ThemezerScreen::fetch_theme_by_id(hex_id);
-
-                break;
+            if (quirc_resize(qr, Camera::get_width(), Camera::get_height()) < 0) {
+                cerr << "quirc_resize failed" << endl;
+                quirc_destroy(qr);
+                qr = nullptr;
             }
         }
+
+        void
+        scan_code() {
+            if (!qr)
+                return;
+
+            const uint8_t* cam_img = Camera::get_grayscale_buffer();
+
+            if (!cam_img)
+                return;
+
+            int w = 0;
+            int h = 0;
+
+            uint8_t* qr_img = quirc_begin(qr, &w, &h);
+
+            if (!qr_img)
+                return;
+
+            for (int y = 0; y < Camera::get_height(); y++) {
+                std::memcpy(
+                    qr_img + y * w,
+                    cam_img + y * Camera::get_pitch(),
+                    Camera::get_width()
+                );
+            }
+
+            quirc_end(qr);
+
+            int count = quirc_count(qr);
+            for (int i = 0; i < count; i++) {
+                quirc_code code {};
+                quirc_data data {};
+
+                quirc_extract(qr, i, &code);
+
+                auto err = quirc_decode(&code, &data);
+                if (err == QUIRC_SUCCESS) {
+                    std::string payload(reinterpret_cast<const char*>(data.payload),
+                                        data.payload_len);
+
+                    cout << "QR payload: \"" << payload << "\"" << endl;
+                    Mix_PlayChannel(-1, scan_sound, 0);
+
+                    if (payload.starts_with("http://") ||
+                        payload.starts_with("https://")) {
+                        ImGui::CloseCurrentPopup();
+                        DownloadThemePopup::open(payload);
+                    } else {
+                        // TODO: report error, only URLs can be scanned
+                        cerr << "Only http and https urls are supported." << endl;
+                    }
+                    break;
+                } else {
+                    cout << "quirc: " << quirc_strerror(err) << '\n';
+                }
+            }
+        }
+
+    } // namespace
+
+    void
+    initialize() {
+        TRACE_FUNC;
+
+        scan_sound = Mix_LoadWAV("fs:/vol/content/sound/qr-scan.wav");
+
+        state = State::hidden;
     }
 
-    void show(Mix_Chunk *qr_sfx) {
-        popup_queued = true;
-        state = State::shown;
+    void
+    finalize() {
+        TRACE_FUNC;
 
-        qr_scan_sfx = qr_sfx;
+        Mix_FreeChunk(scan_sound);
     }
 
-    void process_ui() {
+    void
+    open() {
+        state = State::queued;
+        start_scan();
+        scan_frame_counter = 0;
+    }
+
+    void
+    process_ui() {
         using namespace ImGui::RAII;
 
         if (state == State::hidden) {
             return;
         }
 
-        if (popup_queued) {
+        if (state == State::queued) {
             ImGui::OpenPopup(popup_id);
-            initialize_qr_scanner();
-            scan_frame_counter = 0;
-            popup_queued = false;
+            state = State::visible;
         }
 
         auto center = ImGui::GetMainViewport()->GetCenter();
@@ -170,7 +185,7 @@ namespace QRCodePopup {
         }
 
         switch (state) {
-            case State::shown: {
+            case State::visible: {
                 ImGui::Text("Scan Theme QR Code");
                 ImGui::Separator();
 
@@ -184,30 +199,25 @@ namespace QRCodePopup {
                 Camera::update_texture();
 
                 // Don't scan every single frame if it feels too heavy.
-                scan_frame_counter++;
-
-                if (scan_frame_counter >= 6) {
-                    scan_qr_code();
+                if (++scan_frame_counter > scan_frame_every) {
                     scan_frame_counter = 0;
+                    scan_code();
                 }
 
                 SDL_Texture* camera_texture = Camera::get_texture();
 
                 if (camera_texture) {
-                    constexpr float camera_aspect = 640.0f / 480.0f;
+                    float image_height = 400;
+                    ImVec2 image_size = {
+                        image_height * 4 / 3,
+                        image_height
+                    };
 
-                    float image_height = 400.0f;
-                    float image_width = image_height * camera_aspect;
-
-                    float x = (ImGui::GetContentRegionAvail().x - image_width) * 0.5f;
-
+                    float x = (ImGui::GetContentRegionAvail().x - image_size.x) / 2;
                     if (x > 0.0f)
                         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + x);
 
-                    ImGui::Image(
-                        (ImTextureID)camera_texture,
-                        {image_width, image_height}
-                    );
+                    ImGui::Image((ImTextureID)camera_texture, image_size);
                 }
 
                 {
@@ -220,7 +230,7 @@ namespace QRCodePopup {
             }
 
             default:
-                break;
+                ;
         }
     }
-}
+} // namespace QRCodePopup

@@ -31,31 +31,46 @@ using std::endl;
 using namespace std::literals;
 
 namespace DownloadThemePopup {
-    enum class State {
-        hidden,
-        queued,
-        confirmation,
-        downloading,
-        error,
-        success,
-    };
 
-    State state;
+    namespace {
 
-    const std::string popup_id = "Download Theme";
-    std::string utheme_url;
-    std::filesystem::path utheme_filename;
+        enum class State {
+            hidden,
+            queued,
+            confirmation,
+            downloading,
+            error,
+            success,
+        };
 
-    std::string transfer_name;
-    std::string error_message;
+        State state;
 
-    bool enable_theme = true;
+        const std::string popup_id = "Download Theme";
+        std::string utheme_url;
+        std::filesystem::path utheme_filename;
 
-    void open(const ThemezerAPI::WiiuThemeSmall &theme_data) {
+        std::string transfer_name;
+        std::string error_message;
+
+        bool enable_theme = true;
+
+    } // namespace
+
+    void
+    open(const ThemezerAPI::WiiuThemeSmall &theme_data) {
         state = State::queued;
         transfer_name = theme_data.name;
         utheme_url = theme_data.downloadUrl;
         utheme_filename = ThemeManager::CalcUThemePath(theme_data.slug, theme_data.hexId);
+        error_message.clear();
+    }
+
+    void
+    open(const std::string& url) {
+        state = State::queued;
+        transfer_name = "[QR] \"" + url + "\"";
+        utheme_url = url;
+        utheme_filename = ThemeManager::CalcUThemePath(url);
         error_message.clear();
     }
 

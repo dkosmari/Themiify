@@ -100,6 +100,9 @@ namespace ThemeManager {
     CalcUThemePath(const std::string& slug,
                    const std::string& hexId);
 
+    std::filesystem::path
+    CalcUThemePath(const std::string& url);
+
     void
     RefreshInstalledThemes();
 

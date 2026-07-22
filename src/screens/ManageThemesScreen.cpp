@@ -255,8 +255,10 @@ namespace ManageThemesScreen {
 
         ImGui::SameLine();
 
-        if (ImGui::Button(delete_label, button_size))
+        if (ImGui::Button(delete_label, button_size)) {
             DeletePath(utheme);
+            ThemeManager::RefreshUThemes();
+        }
     }
 
     void show_tab_manage_installed() {

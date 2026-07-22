@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <format>
 #include <fstream>
@@ -214,9 +215,6 @@ namespace ThemeManager {
 
         ConstThemePtr
         ReadInstalledThemeLegacy(const std::filesystem::path &themePath);
-
-        // std::filesystem::path
-        // Sanitize(const std::filesystem::path& input);
 
         std::filesystem::path
         SanitizeElement(const std::filesystem::path& input);
@@ -703,25 +701,6 @@ namespace ThemeManager {
             }
         }
 
-#if 0
-        std::filesystem::path
-        Sanitize(const std::filesystem::path& input) {
-            std::filesystem::path output;
-            auto is_newlib_root = [](const std::filesystem::path& name) -> bool
-            {
-                return GetDeviceOpTab(name.c_str()) != nullptr;
-            };
-
-            for (auto [index, element] : input | std::views::enumerate) {
-                if (index == 0 && is_newlib_root(element))
-                    output /= element; // do not sanitize root element
-                else
-                    output /= SanitizeElement(element);
-            }
-            return output;
-        }
-#endif
-
         std::filesystem::path
         SanitizeElement(const std::filesystem::path& input) {
             std::u32string output_str;
@@ -936,6 +915,25 @@ namespace ThemeManager {
 
         filename += ".utheme";
 
+        return THEMES_ROOT / SanitizeElement(filename);
+    }
+
+    std::filesystem::path
+    CalcUThemePath(const std::string& url) {
+        if (as_lower_case(url).ends_with(".utheme")) {
+            // Assume the URL contains a .utheme file name.
+            auto last_slash = url.find('/');
+            if (last_slash != std::string::npos) {
+                auto filename = url.substr(last_slash + 1);
+                return THEMES_ROOT / SanitizeElement(filename);
+            }
+        }
+
+        auto now = std::chrono::system_clock::now();
+        auto today = std::chrono::floor<std::chrono::days>(now);
+        std::chrono::year_month_day date = today;
+        std::chrono::hh_mm_ss time{now - today};
+        std::string filename = std::format("downloaded-{}-{}.utheme", date, time);
         return THEMES_ROOT / SanitizeElement(filename);
     }
 

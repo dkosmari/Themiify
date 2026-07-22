@@ -55,6 +55,9 @@
 // Enable to get access to the style editor.
 // #define ENABLE_STYLE_EDITOR
 
+// Enable to track slow render times.
+// #define MEASURE_RENDER_TIME
+
 using std::cout;
 using std::cerr;
 using std::endl;
@@ -405,9 +408,11 @@ namespace App {
                     NavBar::process_ui();
                     ImGui::SameLine(0, 9); // NOTE: override ItemSpacing
                     {
+#ifdef MEASURE_RENDER_TIME
                         TimerReporter slow_content{std::cout,
                                                    "ContentPanel::process_ui()",
-                                                   10ms};
+                                                   33ms};
+#endif
                         ContentPanel::process_ui(NavBar::get_current_tab());
                     }
                 }
