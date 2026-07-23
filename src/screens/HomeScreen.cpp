@@ -15,6 +15,7 @@
 #include "../NavBar.h"
 #include "../PluginManager.h"
 #include "../ThemeManager.h"
+#include "../tracer.hpp"
 #include "../utils.h"
 
 #include <iostream>
@@ -49,7 +50,7 @@ namespace HomeScreen {
     bool queueStyleMiiUPrompt = false;
 
     void initialize(SDL_Renderer *renderer) {
-        cout << "Hello from HomeScreen init!" << endl;
+        TRACE_FUNC;
 
         home_renderer = renderer;
 
@@ -65,7 +66,7 @@ namespace HomeScreen {
     }
 
     void finalize() {
-        cout << "Hello from HomeScreen finalize!" << endl;
+        TRACE_FUNC;
 
         if (themiify_logo) {
             SDL_DestroyTexture(themiify_logo);
