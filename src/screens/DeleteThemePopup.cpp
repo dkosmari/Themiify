@@ -69,7 +69,6 @@ namespace DeleteThemePopup {
 
         {
             Font title_font{nullptr, 35};
-            ImGui::AlignTextToFramePadding();
             ImGui::Text("Delete Confirmation");
         }
 

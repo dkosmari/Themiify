@@ -251,10 +251,16 @@ query($hexId: String!) {
             auto& wiiu_obj = data.at("wiiu");
             auto& theme_obj = wiiu_obj.at("theme");
 
+            if (theme_obj.is_null())
+                throw std::runtime_error{"no theme found"};
+
             auto result = glz::read_json<WiiuThemeFull>(theme_obj);
             if (!result)
                 throw std::runtime_error{"glz::read_json() failed: "s
-                                         + glz::format_error(result.error())};
+                                         + glz::format_error(result.error())
+                                         + "\n<<<"s
+                                         + glz::prettify_json(data.dump().value_or("{\"dump failed!\"}"))
+                                         + ">>>"s};
 
             if (callback)
                 callback(*result);

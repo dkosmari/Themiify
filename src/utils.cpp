@@ -58,9 +58,20 @@ void DeletePath(const std::filesystem::path& target) {
 std::string
 as_lower_case(const std::string& input)
 {
+    auto& c_locale = std::locale::classic();
     std::string output = input;
     for (char &c : output)
-        c = std::tolower(static_cast<unsigned char>(c));
+        c = std::tolower(c, c_locale);
+    return output;
+}
+
+std::string
+as_upper_case(const std::string& input)
+{
+    auto& c_locale = std::locale::classic();
+    std::string output = input;
+    for (char &c : output)
+        c = std::toupper(c, c_locale);
     return output;
 }
 

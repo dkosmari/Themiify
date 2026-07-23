@@ -39,6 +39,9 @@ void DeletePath(const std::filesystem::path& target);
 std::string
 as_lower_case(const std::string& input);
 
+std::string
+as_upper_case(const std::string& input);
+
 struct IgnoreCaseLess {
 
     bool

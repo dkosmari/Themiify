@@ -58,8 +58,8 @@ namespace ThemezerScreen {
     SortOrder order = SortOrder::DESC;
 
     std::string query;
+    std::string quickid_query;
 
-    bool is_item_count_zero = false;
     bool fetching_theme_by_id = false;
     bool exact_id_mode = false;
     bool scroll_to_top = false;
@@ -109,6 +109,7 @@ namespace ThemezerScreen {
         exact_id_mode = true;
         exact_theme.reset();
 
+        // TODO: should have an error handler too
         ThemezerAPI::wiiu::theme(
             hex_id,
             [](const WiiuThemeFull& full_theme) {
@@ -126,6 +127,7 @@ namespace ThemezerScreen {
 
         page = new_page;
 
+        // TODO: should have an error handler too.
         ThemezerAPI::wiiu::themes({
                 .paginationArgs = {
                     .limit = 21,
@@ -141,7 +143,6 @@ namespace ThemezerScreen {
                 page_info = new_page_info;
                 themes = new_themes;
 
-                is_item_count_zero = page_info->itemCount == 0;
                 scroll_to_top = true;
             });
     }
@@ -273,29 +274,39 @@ namespace ThemezerScreen {
 
         const bool themezer_busy = ThemezerAPI::is_busy();
 
-        /*------------------------------------------------------------------------------.
-        | Layout:                                                                       |
-        |                                                                               |
-        | [SEARCH-BOX] [QR] [SORT] [REVERSE] [NAV-PREV] [NAV-PAGE] [NAV-NEXT]           |
-        |                                                                               |
-        | Only SEARCH-BOX is stretched, so we need to calculate the width of everything |
-        | that comes after.                                                             |
-        `------------------------------------------------------------------------------*/
+        SDL_WiiUSetSWKBDKeyboardMode(SDL_WIIU_SWKBD_KEYBOARD_MODE_RESTRICTED);
+        SDL_WiiUSetSWKBDOKLabel("Search");
+        SDL_WiiUSetSWKBDHighlightInitialText(SDL_TRUE);
+
+        /*-------------------------------------------------------------------------------.
+        | Layout:                                                                        |
+        |                                                                                |
+        | [SEARCH] [QUICKID] [QR] [SORT] [REVERSE] [NAV-PREV] [NAV-PAGE] [NAV-NEXT]      |
+        |                                                                                |
+        | Only SEARCH is stretched, so we need to calculate the width of everything that |
+        | comes after.                                                                   |
+        `-------------------------------------------------------------------------------*/
+
+        const std::string quickid_label = "QuickID";
+        const auto quickid_size = ImGui::CalcTextSize(quickid_label) + 2 * style.FramePadding;
 
         const std::string qr_label = ICON_FA_QRCODE;
         const auto qr_size = ImGui::CalcTextSize(qr_label) + 2 * style.FramePadding;
+
         const float sort_width = 220;
+
         const std::string reverse_label = order_to_label(order);
         const auto reverse_size = ImGui::CalcTextSize(reverse_label) + 2 * style.FramePadding;
 
         const std::string nav_prev_label = ICON_FA_CHEVRON_LEFT;
         const auto nav_prev_size = ImGui::CalcTextSize(nav_prev_label) + 2 * style.FramePadding;
+
         const std::string nav_next_label = ICON_FA_CHEVRON_RIGHT;
         const auto nav_next_size = ImGui::CalcTextSize(nav_next_label) + 2 * style.FramePadding;
 
         std::string nav_page_label;
         if (exact_id_mode) {
-            nav_page_label = "ID Result";
+            nav_page_label = "";
         } else if (page_info) {
             nav_page_label =
                 "Page "s
@@ -309,6 +320,8 @@ namespace ThemezerScreen {
         const float search_width =
             ImGui::GetContentRegionAvail().x
             - space
+            - quickid_size.x
+            - space
             - qr_size.x
             - space
             - sort_width
@@ -321,15 +334,8 @@ namespace ThemezerScreen {
             - space
             - nav_next_size.x;
 
-        // Sort and Filter controls
         {
             Disabled disable_if{themezer_busy};
-
-            SDL_WiiUSetSWKBDKeyboardMode(SDL_WIIU_SWKBD_KEYBOARD_MODE_RESTRICTED);
-            SDL_WiiUSetSWKBDHintText("Input the name or ID (starting with 'T') of\n"
-                                     "a theme to search for it...");
-            SDL_WiiUSetSWKBDOKLabel("Search");
-            SDL_WiiUSetSWKBDHighlightInitialText(SDL_TRUE);
 
             ImGui::SetNextItemWidth(search_width);
             if (ImGui::InputTextWithHint("##network_search"s, "Search..."s, query)) {
@@ -340,6 +346,21 @@ namespace ThemezerScreen {
                 fetching_theme_by_id = false;
 
                 fetch_page(1);
+            }
+        }
+
+        ImGui::SameLine();
+
+        {
+            Disabled disable_if{themezer_busy};
+
+            ImGui::SetNextItemWidth(quickid_size.x);
+            if (ImGui::InputTextWithHint("##id_search"s, quickid_label, quickid_query)) {
+                if (quickid_query.starts_with("T") || quickid_query.starts_with("t")) {
+                    cout << "Searching QuickID: " << quickid_query << endl;
+                    std::string hexId = as_upper_case(quickid_query.substr(1));
+                    fetch_theme_by_id(hexId);
+                }
             }
         }
 
@@ -445,20 +466,6 @@ namespace ThemezerScreen {
 
                 show_toolbar();
 
-                // Trigger exact ID lookup after normal search returns 0 results
-                if (!themezer_busy &&
-                    is_item_count_zero &&
-                    query.starts_with('T') &&
-                    !fetching_theme_by_id &&
-                    !exact_id_mode) {
-
-                    std::string hex_id = query.substr(1);
-
-                    cout << "Searching exact Themezer ID: " << hex_id << endl;
-
-                    fetch_theme_by_id(hex_id);
-                }
-
                 // Themes List
                 {
                     Disabled disable_if{themezer_busy};
@@ -481,7 +488,8 @@ namespace ThemezerScreen {
                                 ImGui::Text("Searching by exact Themezer ID...");
                                 if (ImGui::Button("Cancel Search")) {
                                     exact_id_mode = false;
-                                    query = "";
+                                    query.clear();
+                                    quickid_query.clear();
                                     fetch_page(1);
                                 }
                             }
@@ -490,7 +498,8 @@ namespace ThemezerScreen {
                                 ImGui::Spacing();
                                 if (ImGui::Button("Clear Search")) {
                                     exact_id_mode = false;
-                                    query = "";
+                                    query.clear();
+                                    quickid_query.clear();
                                     fetch_page(1);
                                 }
                             }

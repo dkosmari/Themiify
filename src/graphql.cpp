@@ -118,8 +118,13 @@ namespace graphql {
             easy.post_data = *post_str;
 
             curl_easy_setopt(easy.handle, CURLOPT_POST, 1L);
-            curl_easy_setopt(easy.handle, CURLOPT_POSTFIELDS, easy.post_data.c_str());
-            curl_easy_setopt(easy.handle, CURLOPT_POSTFIELDSIZE, easy.post_data.size());
+            curl_easy_setopt(easy.handle,
+                             CURLOPT_POSTFIELDSIZE_LARGE,
+                             curl_off_t(easy.post_data.size()));
+            curl_easy_setopt(easy.handle,
+                             CURLOPT_POSTFIELDS,
+                             easy.post_data.c_str());
+
             curl_easy_setopt(easy.handle, CURLOPT_WRITEFUNCTION, write_cb);
             curl_easy_setopt(easy.handle, CURLOPT_WRITEDATA, &response);
         }
@@ -401,9 +406,14 @@ namespace graphql {
 
         byte_stream response;
 
+        cout << "post: " << easy.post_data << endl;
         curl_easy_setopt(easy.handle, CURLOPT_POST, 1L);
-        curl_easy_setopt(easy.handle, CURLOPT_POSTFIELDS, easy.post_data.c_str());
-        curl_easy_setopt(easy.handle, CURLOPT_POSTFIELDSIZE, easy.post_data.size());
+        curl_easy_setopt(easy.handle,
+                         CURLOPT_POSTFIELDSIZE_LARGE,
+                         curl_off_t(easy.post_data.size()));
+        curl_easy_setopt(easy.handle,
+                         CURLOPT_POSTFIELDS,
+                         easy.post_data.c_str());
         curl_easy_setopt(easy.handle, CURLOPT_WRITEFUNCTION, write_cb);
         curl_easy_setopt(easy.handle, CURLOPT_WRITEDATA, &response);
 
