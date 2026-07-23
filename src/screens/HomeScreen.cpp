@@ -91,46 +91,65 @@ namespace HomeScreen {
                               ImGuiChildFlags_AutoResizeY,
                               ImGuiWindowFlags_NoSavedSettings}) {
 
-            StyleVar no_border{ImGuiStyleVar_ImageBorderSize, 0};
-
-            auto current_theme = ThemeManager::GetCurrentTheme();
-
-            if (!current_theme) {
-                auto cfg = PluginManager::GetConfig();
-                if (cfg && cfg->shuffleThemes) {
-                    auto img = ImageLoader::get("ui/theme-placeholder-random.png");
-                    ImGui::Image((ImTextureID)img, img_size);
-                    ImGui::SameLine();
-                    ImGui::TextWrapped("StyleMiiU is shuffling themes.");
+            const bool refreshing_themes = ThemeManager::IsRefreshingThemes();
+            auto cfg = PluginManager::GetConfig();
+            SDL_Texture* img = nullptr;
+            std::string text;
+            std::string subtext;
+            if (!cfg) {
+                // No valid plugin config
+                img = ImageLoader::get("ui/theme-placeholder-no-theme.png");
+                text = "Could not read StyleMiiU config.";
+            } else {
+                // We have valid plugin config.
+                if (cfg->shuffleThemes) {
+                    img = ImageLoader::get("ui/theme-placeholder-random.png");
+                    text = "Theme shuffling enabled.";
                 } else {
-                    auto img = ImageLoader::get("ui/theme-placeholder-no-theme.png");
-                    ImGui::Image((ImTextureID)img, img_size);
-                    ImGui::SameLine();
-                    ImGui::TextWrapped("No theme set.");
+                    // Not shuffling, so expect zero or one theme.
+                    if (cfg->enabledThemes.empty()) {
+                        img = ImageLoader::get("ui/theme-placeholder-no-theme.png");
+                        text = "No theme set.";
+                    } else {
+                        // Should have exactly one theme, but it might not be loaded yet.
+                        auto theme = ThemeManager::GetCurrentTheme();
+                        if (theme) {
+                            if (theme->previews.empty())
+                                img = ImageLoader::get("ui/theme-placeholder-no-preview.png");
+                            else
+                                img = ImageLoader::get(theme->previews.front());
+                            text = theme->metadata.themeName;
+                            if (theme->metadata.themeAuthor)
+                                subtext = "by " + *theme->metadata.themeAuthor;
+                        } else {
+                            // No theme info found, maybe it's still loading?
+                            if (refreshing_themes) {
+                                img = ImageLoader::get("ui/theme-placeholder-loading.png");
+                                text = "Loading theme info...";
+                            } else {
+                                // Theme just doesn't exist.
+                                img = ImageLoader::get("ui/load-error-image.png");
+                                text = "Theme not found.";
+                            }
+                        }
+                    }
                 }
             }
-            else {
-                if (!current_theme->previews.empty()) {
-                    auto img = ImageLoader::get(current_theme->previews.front());
-                    ImGui::Image((ImTextureID)img, img_size);
-                } else {
-                    auto img = ImageLoader::get("ui/theme-placeholder-no-preview.png");
-                    ImGui::Image((ImTextureID)img, img_size);
-                }
 
+            if (img) {
+                StyleVar no_border{ImGuiStyleVar_ImageBorderSize, 0};
+                ImGui::Image((ImTextureID)img, img_size);
                 ImGui::SameLine();
+            }
 
+            {
+                Group right_group;
                 {
-                    Group right_group;
-
-                    {
-                        Font font_guard{nullptr, 30};
-                        ImGui::TextWrapped(current_theme->metadata.themeName);
-                    }
-                    if (current_theme->metadata.themeAuthor)
-                        ImGui::TextWrapped("by: " +
-                                           *current_theme->metadata.themeAuthor);
+                    Font font_guard{nullptr, 30};
+                    ImGui::TextWrapped(text);
                 }
+                if (!subtext.empty())
+                    ImGui::TextWrapped(subtext);
             }
         }
     }
