@@ -33,71 +33,93 @@ using std::cerr;
 using std::endl;
 
 namespace SettingsScreen {
-    bool bootIntegrityCheckPending;
 
-    // Will expand and add more stuff
-    struct Settings {
-        bool is_first_boot = true;
-        bool check_integrity_at_boot = false;
-        int music_volume = 75;
-    };
+    namespace {
 
-    Settings settings;
+        /*-------*/
+        /* Types */
+        /*-------*/
 
-    const std::filesystem::path settings_path = THEMIIFY_ROOT / "settings.json";
+        struct Settings {
+            bool is_first_boot = true;
+            bool check_integrity_at_boot = false;
+            int music_volume = 75;
+        };
 
-    void save_settings() {
-        TRACE_FUNC;
-        try {
-            create_directories(THEMIIFY_ROOT);
-            glz::ex::write_file_json<glz::opts{.prettify = true}>(settings,
-                                                                  settings_path.string(),
-                                                                  std::string{});
-        }
-        catch (std::exception& e) {
-            cerr << "ERROR saving settings: " << e.what() << endl;
-        }
-    }
+        /*-----------*/
+        /* Constants */
+        /*-----------*/
 
-    void load_settings() {
-        TRACE_FUNC;
-        try {
-            glz::ex::read_file_json(settings, settings_path.string(), std::string{});
-        }
-        catch (std::exception& e) {
-            cerr << "ERROR loading settings: " << e.what() << endl;
-        }
-    }
+        // Don't error out when unknown fields are found, to allow users to downgrade.
+        constexpr glz::opts read_opts = { .error_on_unknown_keys = false };
 
-    bool check_is_first_boot() {
-        if (settings.is_first_boot)
-            return true;
+        constexpr glz::opts write_opts = { .prettify = true };
 
-        return false;
-    }
+        const std::filesystem::path settings_path = THEMIIFY_ROOT / "settings.json";
 
-    void run_first_boot_check() {
-        if (!settings.is_first_boot)
-            return;
+        /*-----------*/
+        /* Variables */
+        /*-----------*/
 
-        SettingsPopup::open(SettingsPopup::OpenState::force_integrity);
+        bool bootIntegrityCheckPending;
 
-        settings.is_first_boot = false;
+        Settings settings;
+
+        /*-----------------------*/
+        /* Function declarations */
+        /*-----------------------*/
+
+        bool
+        check_is_first_boot();
+
+        void
+        load_settings();
+
+        void
+        run_boot_integrity_check();
+
+        void
         save_settings();
 
-        settings.is_first_boot = false;
-    }
+        /*----------------------*/
+        /* Function definitions */
+        /*----------------------*/
 
-    void run_boot_integrity_check() {
-        if (!bootIntegrityCheckPending)
-            return;
+        void
+        load_settings() {
+            TRACE_FUNC;
+            try {
+                glz::ex::read_file_json<read_opts>(settings,
+                                                   settings_path.string(),
+                                                   std::string{});
+            }
+            catch (std::exception& e) {
+                cerr << "ERROR loading settings: " << e.what() << endl;
+            }
+        }
 
-        SettingsPopup::open(SettingsPopup::OpenState::force_integrity);
+        void
+        save_settings() {
+            TRACE_FUNC;
+            try {
+                create_directories(THEMIIFY_ROOT);
+                glz::ex::write_file_json<write_opts>(settings,
+                                                     settings_path.string(),
+                                                     std::string{});
+            }
+            catch (std::exception& e) {
+                cerr << "ERROR saving settings: " << e.what() << endl;
+            }
+        }
 
-        bootIntegrityCheckPending = false;
-    }
+    } // namespace
 
-    void initialize(SDL_Renderer * /*renderer*/) {
+    /*------------------*/
+    /* Public functions */
+    /*------------------*/
+
+    void
+    initialize(SDL_Renderer * /*renderer*/) {
         TRACE_FUNC;
 
         create_directories(THEMIIFY_ROOT);
@@ -109,13 +131,15 @@ namespace SettingsScreen {
         Mix_VolumeMusic(mix_volume);
     }
 
-    void finalize() {
+    void
+    finalize() {
         TRACE_FUNC;
 
         save_settings();
     }
 
-    void process_ui() {
+    void
+    process_ui() {
         using namespace ImGui::RAII;
 
 #ifdef DEBUG_BG_COLOR
@@ -238,4 +262,33 @@ namespace SettingsScreen {
 
         SettingsPopup::process_ui();
     }
-}
+
+    bool
+    check_is_first_boot() {
+        return settings.is_first_boot;
+    }
+
+    void
+    run_boot_integrity_check() {
+        if (!bootIntegrityCheckPending)
+            return;
+
+        SettingsPopup::open(SettingsPopup::OpenState::force_integrity);
+
+        bootIntegrityCheckPending = false;
+    }
+
+    void
+    run_first_boot_check() {
+        if (!settings.is_first_boot)
+            return;
+
+        SettingsPopup::open(SettingsPopup::OpenState::force_integrity);
+
+        settings.is_first_boot = false;
+        save_settings();
+
+        settings.is_first_boot = false;
+    }
+
+} // namespace SettingsScreen
