@@ -7,7 +7,6 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#include <cmath>
 #include <iostream>
 #include <filesystem>
 #include <string>
@@ -95,10 +94,7 @@ namespace DownloadThemePopup {
         const ImVec2 download_size = ImGui::CalcTextSize(download_label);
         const ImVec2 cancel_size = ImGui::CalcTextSize(cancel_label);
 
-        const ImVec2 button_size =
-            ImVec2{ std::fmax(download_size.x, cancel_size.x),
-                    std::fmax(download_size.y, cancel_size.y) }
-            + 2 * style.FramePadding;
+        const ImVec2 button_size = max(download_size, cancel_size) + 2 * style.FramePadding;
 
         // Place the buttons on the bottom.
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + available.y - button_size.y);
@@ -188,10 +184,7 @@ namespace DownloadThemePopup {
         const ImVec2 cancel_size = ImGui::CalcTextSize(cancel_label);
 
         const auto &style = ImGui::GetStyle();
-        const ImVec2 button_size =
-            ImVec2{ std::fmax(install_size.x, cancel_size.x),
-                    std::fmax(install_size.y, cancel_size.y) }
-            + 2 * style.FramePadding;
+        const ImVec2 button_size = max(install_size, cancel_size) + 2 * style.FramePadding;
 
         const ImVec2 available = ImGui::GetContentRegionAvail();
         // Place the buttons on the bottom.

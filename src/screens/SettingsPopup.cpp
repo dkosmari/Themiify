@@ -16,7 +16,6 @@
 #include <sysapp/title.h>
 
 #include <atomic>
-#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -383,13 +382,12 @@ namespace SettingsPopup {
         const auto &style = ImGui::GetStyle();
 
         const std::string check_label = ICON_FA_SHIELD " Check Integrity";
-        ImVec2 check_size = ImGui::CalcTextSize(check_label) + 2 * style.FramePadding;
+        ImVec2 check_size = ImGui::CalcTextSize(check_label);
 
         const std::string close_label = ICON_FA_TIMES " Close";
-        ImVec2 close_size = ImGui::CalcTextSize(close_label) + 2 * style.FramePadding;
+        ImVec2 close_size = ImGui::CalcTextSize(close_label);
 
-        ImVec2 button_size = {std::fmax(check_size.x, close_size.x),
-                              std::fmax(check_size.y, close_size.y)};
+        ImVec2 button_size = max(check_size, close_size) + 2 * style.FramePadding;
 
         ImVec2 available = ImGui::GetContentRegionAvail();
 
@@ -497,13 +495,12 @@ namespace SettingsPopup {
         const auto &style = ImGui::GetStyle();
 
         const std::string dump_label = ICON_FA_DOWNLOAD " Dump Files";
-        ImVec2 dump_size = ImGui::CalcTextSize(dump_label) + 2 * style.FramePadding;
+        ImVec2 dump_size = ImGui::CalcTextSize(dump_label);
 
         const std::string close_label = ICON_FA_TIMES " Close";
-        ImVec2 close_size = ImGui::CalcTextSize(close_label) + 2 * style.FramePadding;
+        ImVec2 close_size = ImGui::CalcTextSize(close_label);
 
-        ImVec2 button_size = {std::fmax(dump_size.x, close_size.x),
-                              std::fmax(dump_size.y, close_size.y)};
+        ImVec2 button_size = max(dump_size, close_size) + 2 * style.FramePadding;
 
         float total_width = 2 * button_size.x + style.ItemSpacing.x;
 
@@ -626,13 +623,12 @@ namespace SettingsPopup {
         const auto &style = ImGui::GetStyle();
 
         const std::string clear_label = ICON_FA_TRASH " Clear Cache";
-        ImVec2 clear_size = ImGui::CalcTextSize(clear_label) + 2 * style.FramePadding;
+        ImVec2 clear_size = ImGui::CalcTextSize(clear_label);
 
         const std::string close_label = ICON_FA_TIMES " Close";
-        ImVec2 close_size = ImGui::CalcTextSize(close_label) + 2 * style.FramePadding;
+        ImVec2 close_size = ImGui::CalcTextSize(close_label);
 
-        ImVec2 button_size = {std::fmax(clear_size.x, close_size.x),
-                              std::fmax(clear_size.y, close_size.y)};
+        ImVec2 button_size = max(clear_size, close_size) + 2 * style.FramePadding;
 
         float total_width = 2 * button_size.x + style.ItemSpacing.x;
 

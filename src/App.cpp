@@ -20,6 +20,7 @@
 #include "timer.hpp"
 #include "utils.h"
 #include "screens/QRCodePopup.h"
+#include "screens/ConfirmExitPopup.h"
 
 #include <chrono>
 #include <fstream>
@@ -420,6 +421,8 @@ namespace App {
 #endif
                         ContentPanel::process_ui(NavBar::get_current_tab());
                     }
+
+                    ConfirmExitPopup::process_ui();
                 }
             }
 

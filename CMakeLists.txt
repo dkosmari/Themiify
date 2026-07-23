@@ -18,6 +18,7 @@ add_executable(themiify
     src/main.cpp
     src/NavBar.cpp
     src/PluginManager.cpp
+    src/screens/ConfirmExitPopup.cpp
     src/screens/DeleteThemePopup.cpp
     src/screens/DownloadThemePopup.cpp
     src/screens/HomeScreen.cpp

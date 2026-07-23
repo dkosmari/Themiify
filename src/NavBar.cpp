@@ -10,10 +10,13 @@
 #include <iostream>
 
 #include "NavBar.h"
+
 #include "App.h"
+#include "screens/ConfirmExitPopup.h"
+#include "tracer.hpp"
 #include "utils.h"
 
-#include <SDL2/SDL_image.h>
+#include <SDL_image.h>
 
 #include <imgui.h>
 #include <imgui_stdlib.h>
@@ -46,6 +49,8 @@ namespace NavBar {
     Tab current_tab = Tab::home;
 
     void initialize(SDL_Renderer *renderer) {
+        TRACE_FUNC;
+
         logo_tex = IMG_LoadTexture(renderer, "fs:/vol/content/ui/logo.png");
 
         home_button_normal_tex = IMG_LoadTexture(renderer, "fs:/vol/content/ui/home-button-normal.png");
@@ -65,6 +70,8 @@ namespace NavBar {
     }
 
     void finalize() {
+        TRACE_FUNC;
+
         SDL_DestroyTexture(logo_tex);
 
         SDL_DestroyTexture(home_button_normal_tex);
@@ -165,7 +172,7 @@ namespace NavBar {
             ImGui::Separator();
 
             if (ImGui::ImageButton("exit_button_normal", exit_button_normal_tex, button_size)) {
-                App::quit();
+                ConfirmExitPopup::open();
             }
         }
     }

@@ -15,6 +15,8 @@
 #include <filesystem>
 #include <vector>
 
+#include <imgui.h>
+
 #ifndef THEMIIFY_VERSION
 #define THEMIIFY_VERSION "?.?"
 #endif
@@ -74,3 +76,9 @@ split(const std::string& input,
 std::string
 join(const std::vector<std::string>& tokens,
      const std::string& separator = "");
+
+
+ImVec2
+max(const ImVec2& a,
+    const ImVec2& b)
+    noexcept;

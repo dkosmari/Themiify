@@ -407,15 +407,12 @@ namespace ManageThemesScreen {
             const auto &style = ImGui::GetStyle();
 
             const std::string install_label = ICON_FA_COGS " Install";
-            auto install_size = ImGui::CalcTextSize(install_label) + 2 * style.FramePadding;
+            auto install_size = ImGui::CalcTextSize(install_label);
             const std::string delete_label = ICON_FA_TRASH " Delete";
-            auto delete_size = ImGui::CalcTextSize(delete_label) + 2 * style.FramePadding;
+            auto delete_size = ImGui::CalcTextSize(delete_label);
 
             // Use a common button size, make it prettier when it lines up.
-            const ImVec2 button_size = {
-                std::fmax(install_size.x, delete_size.x),
-                std::fmax(install_size.y, delete_size.y)
-            };
+            const ImVec2 button_size = max(install_size, delete_size) + 2 * style.FramePadding;
 
             const float filename_width =
                 ImGui::GetContentRegionAvail().x

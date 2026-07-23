@@ -9,7 +9,7 @@
 
 #pragma once
 
-#include <SDL2/SDL.h>
+#include <SDL_render.h>
 
 namespace NavBar {
     enum Tab {

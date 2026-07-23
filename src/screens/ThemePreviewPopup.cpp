@@ -7,7 +7,6 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#include <cmath>
 #include <iostream>
 #include <ranges>
 

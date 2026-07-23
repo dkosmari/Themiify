@@ -7,7 +7,6 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#include <cmath>
 #include <string>
 #include <utility>
 
@@ -18,6 +17,7 @@
 #include "DeleteThemePopup.h"
 #include "ManageThemesScreen.h"
 #include "../IconsFontAwesome4.h"
+#include "../utils.h"
 
 using namespace std::literals;
 
@@ -84,10 +84,7 @@ namespace DeleteThemePopup {
         const ImVec2 delete_size = ImGui::CalcTextSize(delete_label);
         const ImVec2 cancel_size = ImGui::CalcTextSize(cancel_label);
 
-        const ImVec2 button_size =
-            ImVec2{ std::fmax(delete_size.x, cancel_size.x),
-                    std::fmax(delete_size.y, cancel_size.y) }
-            + 2 * style.FramePadding;
+        const ImVec2 button_size = max(delete_size, cancel_size) + 2 * style.FramePadding;
 
         float spacing = style.ItemSpacing.x;
         float total_width = 2 * button_size.x + spacing;

@@ -669,12 +669,13 @@ namespace ThemeManager {
                     try {
                         LegacyMetadataJson legacyMetaJson;
                         glz::ex::read_file_json(legacyMetaJson,
-                                   entry.path().string(),
+                                                entry.path().string(),
                                                 std::string{});
                         auto& leg_meta = legacyMetaJson.ThemeData;
                         if (leg_meta.themeID.empty()) // not a Themezer theme, skip it
                             continue;
-                        if (equivalent(themePath, leg_meta.themeInstallPath)) {
+                        if (exists(themePath) && exists(leg_meta.themeInstallPath)
+                            && equivalent(themePath, leg_meta.themeInstallPath)) {
                             theme->metadata.themeID = leg_meta.themeID;
                             theme->metadata.themeName = leg_meta.themeName;
                             theme->metadata.themeAuthor = leg_meta.themeAuthor;
