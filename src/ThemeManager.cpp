@@ -234,9 +234,6 @@ namespace ThemeManager {
         TaskReportInstallProgress(const InstallContextPtr& ctx,
                                   const std::string& msg);
 
-        std::string
-        to_string(Hips::Result res);
-
         void
         UninstallThread(ConstThemePtr theme);
 
@@ -772,25 +769,6 @@ namespace ThemeManager {
             cout << "TaskReportInstallProgress: " << msg << endl;
             if (ctx->progress_func)
                 ctx->progress_func(msg);
-        }
-
-        std::string
-        to_string(Hips::Result res) {
-            switch (res) {
-                using enum Hips::Result;
-                case Success:
-                    return "success";
-                case InvalidPatch:
-                    return "invalid patch";
-                case UnknownFormat:
-                    return "unknown format";
-                case SizeMismatch:
-                    return "size mismatch";
-                case ChecksumMismatch:
-                    return "checksum mismatch";
-                default:
-                    return "unknown error";
-            }
         }
 
         void
