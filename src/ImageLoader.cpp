@@ -2,7 +2,7 @@
  * Themiify - A theme manager for the Nintendo Wii U
  * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
- * Copyright (C) 2026  Daniel K. O. <dkosmari>
+ * Copyright (C) 2026 Daniel K. O. <dkosmari>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -40,6 +40,8 @@
 #include "async_queue.hpp"
 #include "timer.hpp"
 #include "tracer.hpp"
+
+// TODO: downloads should be done in the foreground thread, in process().
 
 using std::endl;
 using namespace std::literals;
@@ -232,7 +234,7 @@ namespace ImageLoader {
         return self->shared_from_this();
     }
 
-    void worker_func(std::stop_token token);
+    void background_loader(std::stop_token token);
 
     void initialize(SDL_Renderer* rend)
     {
@@ -263,7 +265,7 @@ namespace ImageLoader {
         requests_queue.reset();
 
         COUT << "ImageLoader: launching worker thread." << endl;
-        worker_thread = std::jthread{worker_func};
+        worker_thread = std::jthread{background_loader};
 
         assert((std::atomic<LoadState>{}.is_lock_free()));
     }
@@ -632,7 +634,7 @@ namespace ImageLoader {
         }
     }
 
-    void worker_func(std::stop_token token)
+    void background_loader(std::stop_token stopper)
     {
         try {
             multi = curl_multi_init();
@@ -642,8 +644,8 @@ namespace ImageLoader {
             curl_multi_setopt(multi, CURLMOPT_MAX_TOTAL_CONNECTIONS, 10L);
             curl_multi_setopt(multi, CURLMOPT_MAXCONNECTS, 10L);
 
-            while (!token.stop_requested()) {
-                auto entry = requests_queue.try_pop_for(50ms);
+            while (!stopper.stop_requested()) {
+                auto entry = requests_queue.try_pop();
 
                 if (entry) {
                     process_one_request(*entry);
@@ -660,7 +662,7 @@ namespace ImageLoader {
 
                 handle_finished_downloads();
 
-                // std::this_thread::sleep_for(50ms);
+                std::this_thread::sleep_for(50ms);
             }
         }
         catch (std::exception& e) {

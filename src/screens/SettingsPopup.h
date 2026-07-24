@@ -2,7 +2,7 @@
  * Themiify - A theme manager for the Nintendo Wii U
  * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
- * Copyright (C) 2026  Daniel K. O. <dkosmari>
+ * Copyright (C) 2026 Daniel K. O. <dkosmari>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -10,6 +10,7 @@
 #pragma once
 
 namespace SettingsPopup {
+
     enum class OpenState {
         stylemiiu,
         integrity,
@@ -18,7 +19,10 @@ namespace SettingsPopup {
         cache,
     };
 
-    void open(OpenState openState);
+    void
+    open(OpenState openState);
 
-    void process_ui();
-}
+    void
+    process_ui();
+
+} // namespace SettingsPopup

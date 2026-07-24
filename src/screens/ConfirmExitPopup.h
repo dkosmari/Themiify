@@ -9,15 +9,10 @@
 
 #pragma once
 
-#include <SDL2/SDL.h>
-#include <string>
+namespace ConfirmExitPopup {
 
-namespace ThemezerScreen {
-    void initialize(SDL_Renderer *renderer);
-
-    void finalize();
+    void open();
 
     void process_ui();
 
-    void fetch_theme_by_id(const std::string& hex_id);
-}
+} // namespace ConfirmExitPopup

@@ -8,26 +8,20 @@
  */
 
 #include <string>
-#include <utility>
 
 #include <imgui.h>
 #include <imgui_raii.h>
 #include <imgui_stdlib.h>
 
-#include "DeleteThemePopup.h"
-#include "ManageThemesScreen.h"
+#include "ConfirmExitPopup.h"
+
+#include "../App.h"
 #include "../IconsFontAwesome4.h"
 #include "../UI.h"
 
-using namespace std::literals;
-
-namespace DeleteThemePopup {
+namespace ConfirmExitPopup {
 
     namespace {
-
-        /*-------*/
-        /* Types */
-        /*-------*/
 
         enum class State {
             hidden,
@@ -35,62 +29,44 @@ namespace DeleteThemePopup {
             visible,
         };
 
-        /*-----------*/
-        /* Constants */
-        /*-----------*/
-
-        const std::string popup_id = "DeleteThemePopup"s;
-
-        /*-----------*/
-        /* Variables */
-        /*-----------*/
-
         State state;
 
-        ThemeManager::ConstThemePtr installedTheme;
+        std::string popup_id;
 
     } // namespace
 
-    /*------------------*/
-    /* Public functions */
-    /*------------------*/
-
     void
-    open(ThemeManager::ConstThemePtr installed_theme) {
+    open() {
         state = State::queued;
-        installedTheme = std::move(installed_theme);
     }
 
     void
     process_ui() {
         using namespace ImGui::RAII;
+
         if (state == State::hidden)
             return;
 
         if (state == State::queued) {
-            ImGui::OpenPopup(popup_id);
             state = State::visible;
+            ImGui::OpenPopup(popup_id);
         }
 
-        auto center = ImGui::GetMainViewport()->GetCenter();
+        const auto center = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(center, ImGuiCond_Always, {0.5f, 0.5f});
-        ImGui::SetNextWindowSize({600, 0}, ImGuiCond_Always);
         PopupModal popup{popup_id, nullptr,
-                         ImGuiWindowFlags_NoSavedSettings |
-                         // ImGuiWindowFlags_AlwaysAutoResize |
+                         ImGuiWindowFlags_AlwaysAutoResize |
+                         ImGuiWindowFlags_NoDecoration |
                          ImGuiWindowFlags_NoMove |
-                         ImGuiWindowFlags_NoTitleBar |
-                         ImGuiWindowFlags_NoResize};
-
+                         ImGuiWindowFlags_NoSavedSettings};
         if (!popup) {
             state = State::hidden;
             return;
         }
 
-        UI::Title("Delete Confirmation");
+        UI::Title("Exit confirmation");
 
-        ImGui::TextWrapped("Would you like to delete \"%s\"?",
-                           installedTheme->metadata.themeName.c_str());
+        ImGui::Text("Are you sure you want to exit?");
 
         UI::ButtonHBox buttons;
         buttons.add(ICON_FA_TIMES " Cancel",
@@ -98,18 +74,16 @@ namespace DeleteThemePopup {
                     {
                         ImGui::CloseCurrentPopup();
                         state = State::hidden;
-                        installedTheme.reset();
                     });
-        buttons.add(ICON_FA_TRASH " Delete",
+        buttons.add(ICON_FA_SIGN_OUT " Exit",
                     true,
                     []
                     {
-                        ThemeManager::Uninstall(installedTheme);
                         ImGui::CloseCurrentPopup();
                         state = State::hidden;
-                        installedTheme.reset();
+                        App::quit();
                     });
         buttons.show();
     }
 
-} // namespace DeleteThemePopup
+} // namespace ConfirmExitPopup

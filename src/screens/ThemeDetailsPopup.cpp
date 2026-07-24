@@ -2,12 +2,13 @@
  * Themiify - A theme manager for the Nintendo Wii U
  * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
- * Copyright (C) 2026  Daniel K. O. <dkosmari>
+ * Copyright (C) 2026 Daniel K. O. <dkosmari>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #include <iostream>
+#include <utility>
 
 #include <SDL2/SDL.h>
 
@@ -16,19 +17,20 @@
 #include <imgui_raii.h>
 
 #include "ThemeDetailsPopup.h"
+
+#include "../App.h"
+#include "../DownloadManager.h"
+#include "../IconsFontAwesome4.h"
+#include "../ImageLoader.h"
+#include "../NavBar.h"
+#include "../PluginManager.h"
+#include "../ThemezerAPI.h"
+#include "../tracer.hpp"
 #include "DeleteThemePopup.h"
 #include "DownloadThemePopup.h"
 #include "HomeScreen.h"
 #include "ManageThemesScreen.h"
 #include "ThemePreviewPopup.h"
-#include "../App.h"
-#include "../DownloadManager.h"
-#include "../IconsFontAwesome4.h"
-#include "../installer.h"
-#include "../ImageLoader.h"
-#include "../NavBar.h"
-#include "../ThemezerAPI.h"
-#include "../tracer.hpp"
 
 using std::cout;
 using std::endl;
@@ -52,7 +54,7 @@ namespace ThemeDetailsPopup {
     std::string error;
     WiiuThemeFull fullTheme;
     WiiuThemeSmall smallTheme;
-    Installer::InstalledThemeMetadata installedThemeData;
+    ThemeManager::ConstThemePtr installedTheme;
     const std::string popup_id = "ThemeDetailsPopup"s;
 
     void open_themezer(const WiiuThemeSmall &small_theme) {
@@ -72,9 +74,9 @@ namespace ThemeDetailsPopup {
         state = State::waiting_themezer;
     }
 
-    void open_local(const Installer::InstalledThemeMetadata& installed_theme_data) {
+    void open_local(ThemeManager::ConstThemePtr installed_theme) {
         popup_queued = true;
-        installedThemeData = installed_theme_data;
+        installedTheme = std::move(installed_theme);
         state = State::ready_local;
     }
 
@@ -101,11 +103,11 @@ namespace ThemeDetailsPopup {
 
         if (Child left{"left", {left_width, 0}, ImGuiChildFlags_NavFlattened}) {
             {
-                Font title_font{nullptr, 50};
-                ImGui::TextWrapped(installedThemeData.uthemeMetadata.themeName);
+                Font name_font{nullptr, 50};
+                ImGui::TextWrapped(installedTheme->metadata.themeName);
             }
-            if (installedThemeData.uthemeMetadata.themeAuthor)
-                ImGui::TextWrapped("by " + *installedThemeData.uthemeMetadata.themeAuthor);
+            if (installedTheme->metadata.themeAuthor)
+                ImGui::TextWrapped("by " + *installedTheme->metadata.themeAuthor);
 
             // Put content in a scrollable child window.
             if (Child content{"content", {0, 0},
@@ -115,24 +117,24 @@ namespace ThemeDetailsPopup {
                 if (ImGui::IsWindowAppearing())
                     ImGui::SetScrollY(0);
 
-                if (!installedThemeData.previewPaths.empty()) {
+                if (!installedTheme->previews.empty()) {
                     ImVec2 preview_size {640, 360};
                     // Center the image.
                     auto available = ImGui::GetContentRegionAvail();
                     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (available.x - preview_size.x)
                                          / 2);
-                    auto img = ImageLoader::get(installedThemeData.previewPaths.front());
+                    auto img = ImageLoader::get(installedTheme->previews.front());
                     StyleVar no_padding{ImGuiStyleVar_FramePadding, {0, 0}};
                     if (ImGui::ImageButton("preview", (ImTextureID)img, preview_size))
-                        ThemePreviewPopup::open(installedThemeData.themePath,
-                                                installedThemeData.previewPaths);
+                        ThemePreviewPopup::open(installedTheme->path,
+                                                installedTheme->previews);
                 }
 
-                if (!installedThemeData.files.empty()) {
+                if (!installedTheme->files.empty()) {
                     ImGui::SeparatorText("Files:");
                     Font file_font{nullptr, 20};
-                    const std::string prefix = installedThemeData.themePath.string() + "/";
-                    for (const auto& filename : installedThemeData.files) {
+                    const std::string prefix = installedTheme->path.string() + "/";
+                    for (const auto& filename : installedTheme->files) {
                         std::string label = filename;
                         if (label.starts_with(prefix))
                             label.erase(0, prefix.size());
@@ -156,44 +158,43 @@ namespace ThemeDetailsPopup {
                 if (Child content{"content", {0 , -buttons_height},
                                   ImGuiChildFlags_NavFlattened
                                   | ImGuiChildFlags_AlwaysUseWindowPadding}) {
-                    if (installedThemeData.uthemeMetadata.themeVersion) {
+                    if (installedTheme->metadata.themeVersion) {
                         Font small{nullptr, 24};
                         show_label_text(ICON_FA_CALENDAR_CHECK_O,
-                                        installedThemeData.uthemeMetadata.themeVersion->substr(0, 10));
+                                        installedTheme->metadata.themeVersion->substr(0, 10));
                         ImGui::SetItemTooltip("Theme version.");
                     }
                 }
 
-                bool is_shuffling = Installer::IsShuffling();
-                bool is_enabled = Installer::IsEnabled(installedThemeData);
+                auto cfg = PluginManager::GetConfig();
+                bool is_enabled = PluginManager::IsEnabled(installedTheme->path);
 
-                if (is_shuffling) {
+                if (cfg && cfg->shuffleThemes) {
                     if (ImGui::Checkbox("Enabled", is_enabled)) {
                         if (is_enabled)
-                            Installer::Enable(installedThemeData);
+                            PluginManager::Enable(installedTheme->path);
                         else
-                            Installer::Disable(installedThemeData);
-                        HomeScreen::force_refresh();
+                            PluginManager::Disable(installedTheme->path);
                     }
                 } else {
-                    Disabled disabled_if{is_enabled};
+                    // Disable button if there's no config, or theme is already enabled.
+                    Disabled disabled_if{!cfg || is_enabled};
                     if (ImGui::Button(ICON_FA_STAR " Apply", {-1, 0})) {
-                        Installer::Enable(installedThemeData);
+                        PluginManager::Enable(installedTheme->path);
                         ImGui::CloseCurrentPopup();
-                        HomeScreen::force_refresh();
                     }
                 }
                 ImGui::SetItemDefaultFocus();
 
                 {
-                    Disabled if_no_previews{installedThemeData.previewPaths.empty()};
+                    Disabled if_no_previews{installedTheme->previews.empty()};
                     if (ImGui::Button(ICON_FA_EYE " Preview", {-1, 0}))
-                        ThemePreviewPopup::open(installedThemeData.themePath,
-                                                installedThemeData.previewPaths);
+                        ThemePreviewPopup::open(installedTheme->path,
+                                                installedTheme->previews);
                 }
 
                 if (ImGui::Button(ICON_FA_TRASH " Delete", {-1, 0})) {
-                    DeleteThemePopup::open(installedThemeData);
+                    DeleteThemePopup::open(installedTheme);
                 }
 
                 if (ImGui::Button(ICON_FA_TIMES " Close", {-1, 0}))
@@ -214,7 +215,7 @@ namespace ThemeDetailsPopup {
         if (Child left{"left", {left_width, 0},
                        ImGuiChildFlags_NavFlattened}) {
             {
-                Font title_font{nullptr, 50};
+                Font name_font{nullptr, 50};
                 ImGui::TextWrapped(fullTheme.name);
             }
             ImGui::TextWrapped("by %s", fullTheme.creator.username.data());

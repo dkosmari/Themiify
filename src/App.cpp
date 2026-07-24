@@ -2,21 +2,25 @@
  * Themiify - A theme manager for the Nintendo Wii U
  * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
- * Copyright (C) 2026  Daniel K. O. <dkosmari>
+ * Copyright (C) 2026 Daniel K. O. <dkosmari>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #include "App.h"
-#include "NavBar.h"
-#include "ContentPanel.h"
-#include "ThemezerAPI.h"
-#include "ImageLoader.h"
-#include "DownloadManager.h"
+
 #include "Camera.h"
-#include "utils.h"
-#include "installer.h"
+#include "ContentPanel.h"
+#include "DownloadManager.h"
+#include "ImageLoader.h"
+#include "NavBar.h"
+#include "PluginManager.h"
+#include "ThemeManager.h"
+#include "ThemezerAPI.h"
 #include "timer.hpp"
+#include "utils.h"
+#include "screens/QRCodePopup.h"
+#include "screens/ConfirmExitPopup.h"
 
 #include <chrono>
 #include <fstream>
@@ -52,6 +56,9 @@
 
 // Enable to get access to the style editor.
 // #define ENABLE_STYLE_EDITOR
+
+// Enable to track slow render times.
+// #define MEASURE_RENDER_TIME
 
 using std::cout;
 using std::cerr;
@@ -228,7 +235,7 @@ namespace App {
         IMG_Init(IMG_INIT_JPG | IMG_INIT_PNG | IMG_INIT_WEBP);
         Mix_Init(MIX_INIT_MP3 | MIX_INIT_OGG);
 
-        Mix_OpenAudioDevice(48000, MIX_DEFAULT_FORMAT, 2, 1024, NULL, SDL_AUDIO_ALLOW_ANY_CHANGE);
+        Mix_OpenAudioDevice(48000, MIX_DEFAULT_FORMAT, 2, 4096, NULL, SDL_AUDIO_ALLOW_ANY_CHANGE);
 
         SDL_EventState(SDL_SYSWMEVENT, SDL_ENABLE);
 
@@ -242,7 +249,10 @@ namespace App {
         Camera::initialize(renderer);
         Camera::open();
 
-        Installer::initialize();
+        QRCodePopup::initialize();
+
+        PluginManager::initialize();
+        ThemeManager::initialize();
 
         DownloadManager::initialize(user_agent);
         ImageLoader::initialize(renderer);
@@ -283,9 +293,12 @@ namespace App {
 
         NavBar::finalize();
         ContentPanel::finalize();
-        Installer::finalize();
+        ThemeManager::finalize();
+        PluginManager::finalize();
         ImageLoader::finalize();
         DownloadManager::finalize();
+
+        QRCodePopup::finalize();
 
         Camera::close();
         Camera::shutdown();
@@ -323,6 +336,20 @@ namespace App {
                 cerr << "ERROR in DownloadManager::process(): " << e.what() << endl;
             }
 
+            try {
+                ImageLoader::process();
+            }
+            catch (std::exception& e) {
+                cerr << "ERROR in ImageLoader::process(): " << e.what() << endl;
+            }
+
+            try {
+                ThemeManager::process();
+            }
+            catch (std::exception& e) {
+                cerr << "ERROR in ThemeManager::process(): " << e.what() << endl;
+            }
+
             SDL_Event e;
             while(SDL_PollEvent(&e)) {
                 ImGui_ImplSDL2_ProcessEvent(&e);
@@ -354,8 +381,6 @@ namespace App {
                         break;
                 }
             }
-
-            ImageLoader::process();
 
             ImGui_ImplSDLRenderer2_NewFrame();
             ImGui_ImplSDL2_NewFrame();
@@ -389,11 +414,15 @@ namespace App {
                     NavBar::process_ui();
                     ImGui::SameLine(0, 9); // NOTE: override ItemSpacing
                     {
+#ifdef MEASURE_RENDER_TIME
                         TimerReporter slow_content{std::cout,
                                                    "ContentPanel::process_ui()",
-                                                   10ms};
+                                                   33ms};
+#endif
                         ContentPanel::process_ui(NavBar::get_current_tab());
                     }
+
+                    ConfirmExitPopup::process_ui();
                 }
             }
 

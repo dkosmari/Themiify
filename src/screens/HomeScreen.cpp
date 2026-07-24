@@ -2,7 +2,7 @@
  * Themiify - A theme manager for the Nintendo Wii U
  * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
- * Copyright (C) 2026  Daniel K. O. <dkosmari>
+ * Copyright (C) 2026 Daniel K. O. <dkosmari>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -10,10 +10,12 @@
 #include "HomeScreen.h"
 #include "SettingsScreen.h"
 #include "SettingsPopup.h"
-#include "../NavBar.h"
-#include "../installer.h"
 #include "../IconsFontAwesome4.h"
 #include "../ImageLoader.h"
+#include "../NavBar.h"
+#include "../PluginManager.h"
+#include "../ThemeManager.h"
+#include "../tracer.hpp"
 #include "../utils.h"
 
 #include <iostream>
@@ -35,70 +37,34 @@ using std::endl;
 // Define this to help seeing the padding and spacing values for windows.
 // #define DEBUG_BG_COLOR
 
+// Enable to inject stylemiiu missing state
+// #define DEBUG_INJECT_STYLEMIIU_MISSING
+
 namespace HomeScreen {
-    using Installer::InstalledThemeMetadata;
+
+    using ThemeManager::Theme;
 
     SDL_Renderer *home_renderer = nullptr;
 
     SDL_Texture *themiify_logo = nullptr;
 
-    std::optional<InstalledThemeMetadata> current_theme;
-
-    bool current_theme_refresh = true;
-
     bool isFirstBoot = true;
     bool styleMiiUExists = true;
     bool queueStyleMiiUPrompt = false;
 
-    std::string get_theme_id(const std::string& str) {
-        auto open = str.rfind('(');
-        auto close = str.rfind(')');
-
-        if (open == std::string::npos ||
-            close == std::string::npos ||
-            close <= open)
-            return {};
-
-        return str.substr(open + 1, close - open - 1);
-    }
-
-    void refresh_current_theme() {
-        current_theme = Installer::GetCurrentTheme();
-        current_theme_refresh = false;
-    }
-
-    void force_refresh() {
-        current_theme_refresh = true;
-    }
-
-    bool check_stylemiiu_exists() {
-        char environmentPathBuffer[0x100];
-
-        MochaUtilsStatus res;
-        if ((res = Mocha_GetEnvironmentPath(environmentPathBuffer, sizeof(environmentPathBuffer))) != MOCHA_RESULT_SUCCESS) {
-            cerr << "Failed to get environment path. Are you running on Aroma? Result: "
-                 << Mocha_GetStatusStr(res) << endl;
-            return false;
-        }
-
-        if (exists(std::filesystem::path{environmentPathBuffer} / "plugins/stylemiiu.wps"))
-            return true;
-
-        return false;
-    }
-
     void initialize(SDL_Renderer *renderer) {
-        cout << "Hello from HomeScreen init!" << endl;
+        TRACE_FUNC;
 
         home_renderer = renderer;
 
         themiify_logo = IMG_LoadTexture(renderer, "fs:/vol/content/ui/themiify-logo.png");
 
-        current_theme_refresh = true;
-
-        styleMiiUExists = check_stylemiiu_exists();
+        styleMiiUExists = PluginManager::IsInstalled();
         if (!styleMiiUExists)
             queueStyleMiiUPrompt = true;
+#ifdef DEBUG_INJECT_STYLEMIIU_MISSING
+        queueStyleMiiUPrompt = true;
+#endif
 
         cout << "styleMiiUExists: " << styleMiiUExists << endl;
 
@@ -106,7 +72,7 @@ namespace HomeScreen {
     }
 
     void finalize() {
-        cout << "Hello from HomeScreen finalize!" << endl;
+        TRACE_FUNC;
 
         if (themiify_logo) {
             SDL_DestroyTexture(themiify_logo);
@@ -132,44 +98,137 @@ namespace HomeScreen {
                               ImGuiChildFlags_AutoResizeY,
                               ImGuiWindowFlags_NoSavedSettings}) {
 
-            StyleVar no_border{ImGuiStyleVar_ImageBorderSize, 0};
-
-            if (!current_theme) {
-                if (Installer::IsShuffling()) {
-                    auto img = ImageLoader::get("ui/theme-placeholder-random.png");
-                    ImGui::Image((ImTextureID)img, img_size);
-                    ImGui::SameLine();
-                    ImGui::TextWrapped("StyleMiiU is shuffling themes.");
+            const bool refreshing_themes = ThemeManager::IsRefreshingThemes();
+            auto cfg = PluginManager::GetConfig();
+            SDL_Texture* img = nullptr;
+            std::string text;
+            std::string subtext;
+            if (!cfg) {
+                // No valid plugin config
+                img = ImageLoader::get("ui/theme-placeholder-no-theme.png");
+                text = "Could not read StyleMiiU config.";
+            } else {
+                // We have valid plugin config.
+                if (cfg->shuffleThemes) {
+                    img = ImageLoader::get("ui/theme-placeholder-random.png");
+                    text = "Theme shuffling enabled.";
                 } else {
-                    auto img = ImageLoader::get("ui/theme-placeholder-no-theme.png");
-                    ImGui::Image((ImTextureID)img, img_size);
-                    ImGui::SameLine();
-                    ImGui::TextWrapped("No theme set.");
-                }
-            }
-            else {
-                if (!current_theme->previewPaths.empty()) {
-                    auto img = ImageLoader::get(current_theme->previewPaths.front());
-                    ImGui::Image((ImTextureID)img, img_size);
-                } else {
-                    auto img = ImageLoader::get("ui/theme-placeholder-no-preview.png");
-                    ImGui::Image((ImTextureID)img, img_size);
-                }
-
-                ImGui::SameLine();
-
-                {
-                    Group right_group;
-
-                    {
-                        Font font_guard{nullptr, 30};
-                        ImGui::TextWrapped(current_theme->uthemeMetadata.themeName);
+                    // Not shuffling, so expect zero or one theme.
+                    if (cfg->enabledThemes.empty()) {
+                        img = ImageLoader::get("ui/theme-placeholder-no-theme.png");
+                        text = "No theme set.";
+                    } else {
+                        // Should have exactly one theme, but it might not be loaded yet.
+                        auto theme = ThemeManager::GetCurrentTheme();
+                        if (theme) {
+                            if (theme->previews.empty())
+                                img = ImageLoader::get("ui/theme-placeholder-no-preview.png");
+                            else
+                                img = ImageLoader::get(theme->previews.front());
+                            text = theme->metadata.themeName;
+                            if (theme->metadata.themeAuthor)
+                                subtext = "by " + *theme->metadata.themeAuthor;
+                        } else {
+                            // No theme info found, maybe it's still loading?
+                            if (refreshing_themes) {
+                                img = ImageLoader::get("ui/theme-placeholder-loading.png");
+                                text = "Loading theme info...";
+                            } else {
+                                // Theme just doesn't exist.
+                                img = ImageLoader::get("ui/load-error-image.png");
+                                text = "Theme not found.";
+                            }
+                        }
                     }
-                    if (current_theme->uthemeMetadata.themeAuthor)
-                        ImGui::TextWrapped("by: " +
-                                           *current_theme->uthemeMetadata.themeAuthor);
                 }
             }
+
+            if (img) {
+                StyleVar no_border{ImGuiStyleVar_ImageBorderSize, 0};
+                ImGui::Image((ImTextureID)img, img_size);
+                ImGui::SameLine();
+            }
+
+            {
+                Group right_group;
+                {
+                    Font font_guard{nullptr, 30};
+                    ImGui::TextWrapped(text);
+                }
+                if (!subtext.empty())
+                    ImGui::TextWrapped(subtext);
+            }
+        }
+    }
+
+    void show_credits() {
+        using namespace ImGui::RAII;
+        {
+            Font font_guard{nullptr, 45};
+            ImGui::Text("Credits:");
+        }
+
+        ImGui::Spacing();
+
+        ImGui::Text(ICON_FA_CODE " Developers:");
+        {
+            Indent _;
+            ImGui::BulletText("Fangal-Airbag");
+            ImGui::BulletText("AlphaCraft9658");
+            ImGui::BulletText("Daniel K. O. (dkosmari)");
+        }
+
+        ImGui::Spacing();
+
+        ImGui::Text(ICON_FA_PAINT_BRUSH " UI Design:");
+        {
+            Indent _;
+            ImGui::BulletText("Perrohuevo");
+            ImGui::BulletText("dewgong");
+            ImGui::BulletText("Daniel K. O. (dkosmari)");
+        }
+
+        ImGui::Spacing();
+
+        ImGui::Text(ICON_FA_FONT " Fonts:");
+        {
+            Indent _;
+            ImGui::BulletText("Wii U System Font");
+            ImGui::BulletText("FontAwesome");
+        }
+
+        ImGui::Spacing();
+
+        ImGui::Text(ICON_FA_MUSIC " Music:");
+        {
+            Indent one;
+            ImGui::BulletText("OMORI OST - 029 Good For Health, Bad for Imagination");
+            {
+                Indent two;
+                ImGui::TextLink("https://www.youtube.com/watch?v=XeK_I0XQW6U");
+            }
+        }
+
+        ImGui::Spacing();
+
+        ImGui::Text(ICON_FA_GITHUB " GitHub:");
+        {
+            Indent _;
+            ImGui::Bullet();
+            ImGui::TextLink("https://github.com/ThemeCafe/Themiify");
+        }
+
+        ImGui::Spacing();
+
+        ImGui::Text(ICON_FA_STAR " Special thanks:");
+        {
+            Indent _;
+            ImGui::BulletText("Juanen100 for the StyleMiiU Aroma Plugin!");
+            ImGui::BulletText("The Theme Café Discord mods, devs and founders!");
+            ImGui::BulletText("Gatto for the incredible Theme Café docs!");
+            ImGui::BulletText("Migush and the whole Themezer team!");
+            ImGui::BulletText("All the amazing Wii U theme creators!");
+            ImGui::BulletText("And many more!");
         }
     }
 
@@ -183,9 +242,6 @@ namespace HomeScreen {
         Child home_content{"HomeContent", {0, 0}, ImGuiChildFlags_AlwaysUseWindowPadding};
         if (!home_content)
             return;
-
-        if (current_theme_refresh)
-            refresh_current_theme();
 
         if (themiify_logo) {
 
@@ -221,89 +277,28 @@ namespace HomeScreen {
 #ifdef DEBUG_BG_COLOR
         StyleColor brown_bg{ImGuiCol_ChildBg, {0.3, 0.3, 0.0, 1.0}};
 #endif
-        Child scrollable_content{"scrollable_content"};
-        if (!scrollable_content)
-            return;
+        if (Child scrollable_content{"scrollable_content"}) {
+            show_current_theme();
 
-        show_current_theme();
+            if (ImGui::Button("Download Themes"))
+                NavBar::set_current_tab(NavBar::Tab::themezer);
 
-        if (ImGui::Button("Download Themes"))
-            NavBar::set_current_tab(NavBar::Tab::themezer);
+            ImGui::SameLine();
 
-        ImGui::SameLine();
+            {
+                // align next button to the right
+                auto available = ImGui::GetContentRegionAvail();
+                std::string label = "Manage Installed Themes";
+                ImVec2 button_size = ImGui::CalcTextSize(label) + 2 * style.FramePadding;
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + available.x - button_size.x);
+                if (ImGui::Button(label, button_size))
+                    NavBar::set_current_tab(NavBar::Tab::manage_themes);
+            }
 
-        {
-            // align next button to the right
-            auto available = ImGui::GetContentRegionAvail();
-            std::string label = "Manage Installed Themes";
-            ImVec2 button_size = ImGui::CalcTextSize(label) + 2 * style.FramePadding;
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + available.x - button_size.x);
-            if (ImGui::Button(label, button_size))
-                NavBar::set_current_tab(NavBar::Tab::manage_themes);
+            ImGui::Separator();
+
+            show_credits();
         }
-
-        ImGui::Separator();
-
-        {
-            Font font_guard{nullptr, 45};
-            ImGui::Text("Credits:");
-        }
-
-        ImGui::Spacing();
-
-        ImGui::Text(ICON_FA_CODE " Developers:");
-        ImGui::Indent();
-        ImGui::BulletText("Fangal-Airbag");
-        ImGui::BulletText("AlphaCraft9658");
-        ImGui::BulletText("Daniel K. O. (dkosmari)");
-        ImGui::Unindent();
-
-        ImGui::Spacing();
-
-        ImGui::Text(ICON_FA_PAINT_BRUSH " UI Design:");
-        ImGui::Indent();
-        ImGui::BulletText("Perrohuevo");
-        ImGui::BulletText("dewgong");
-        ImGui::BulletText("Daniel K. O. (dkosmari)");
-        ImGui::Unindent();
-
-        ImGui::Spacing();
-
-        ImGui::Text(ICON_FA_FONT " Fonts:");
-        ImGui::Indent();
-        ImGui::BulletText("Wii U System Font");
-        ImGui::BulletText("FontAwesome");
-        ImGui::Unindent();
-
-        ImGui::Spacing();
-
-        ImGui::Text(ICON_FA_MUSIC " Music:");
-        ImGui::Indent();
-        ImGui::BulletText("OMORI OST - 029 Good For Health, Bad for Imagination");
-        ImGui::Indent();
-        ImGui::TextLink("https://www.youtube.com/watch?v=XeK_I0XQW6U");
-        ImGui::Unindent();
-        ImGui::Unindent();
-
-        ImGui::Spacing();
-
-        ImGui::Text(ICON_FA_GITHUB " GitHub:");
-        ImGui::Indent();
-        ImGui::Bullet();
-        ImGui::TextLink("https://github.com/Themiify-hb/Themiify");
-        ImGui::Unindent();
-
-        ImGui::Spacing();
-
-        ImGui::Text(ICON_FA_STAR " Special thanks:");
-        ImGui::Indent();
-        ImGui::BulletText("Juanen100 for the StyleMiiU Aroma Plugin!");
-        ImGui::BulletText("The Theme Café Discord mods, devs and founders!");
-        ImGui::BulletText("Gatto for the incredible Theme Café docs!");
-        ImGui::BulletText("Migush and the whole Themezer team!");
-        ImGui::BulletText("All the amazing Wii U theme creators!");
-        ImGui::BulletText("And many more!");
-        ImGui::Unindent();
-
     }
-}
+
+} // namespace HomeScreen

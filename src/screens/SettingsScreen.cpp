@@ -2,14 +2,18 @@
  * Themiify - A theme manager for the Nintendo Wii U
  * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
- * Copyright (C) 2026  Daniel K. O. <dkosmari>
+ * Copyright (C) 2026 Daniel K. O. <dkosmari>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #include "SettingsScreen.h"
 #include "SettingsPopup.h"
+#include "../NavBar.h"
+#include "../PluginManager.h"
+#include "../ThemeManager.h"
 #include "../utils.h"
+#include "../tracer.hpp"
 
 #include <iostream>
 
@@ -18,111 +22,118 @@
 #include <imgui.h>
 #include <imgui_raii.h>
 
-#include <glaze/glaze.hpp>
+#include <glaze/exceptions/json_exceptions.hpp>
+#include <glaze/json.hpp>
 
 // Define this to help seeing the padding and spacing values for windows.
 // #define DEBUG_BG_COLOR
 
 using std::cout;
+using std::cerr;
 using std::endl;
 
 namespace SettingsScreen {
-    int volume;
-    bool isFirstBoot;
-    bool checkIntegrityAtBoot;
-    bool bootIntegrityCheckPending;
 
-    // Will expand and add more stuff
-    struct Settings {
-        bool is_first_boot = true;
-        bool check_integrity_at_boot = false;
-        int music_volume = 75;
-    };
+    namespace {
 
-    Settings settings;
+        /*-------*/
+        /* Types */
+        /*-------*/
 
-    const std::filesystem::path settings_path = THEMIIFY_ROOT / "settings.json";
-
-    void save_settings() {
-        create_directories(THEMIIFY_ROOT);
-
-        auto json = glz::write<glz::opts{.prettify = true}>(settings);
-
-        if (!json) {
-            cout << "Failed to serialize settings" << endl;
-            return;
-        }
-
-        std::ofstream file(settings_path, std::ios::trunc);
-        if (!file.is_open()) {
-            cout << "Failed to open settings file" << endl;
-            return;
-        }
-
-        file << *json;
-    }
-
-    void load_settings() {
-        std::ifstream file(settings_path);
-        if (!file.is_open())
-            return;
-
-        std::string json{
-            std::istreambuf_iterator<char>{file},
-            std::istreambuf_iterator<char>{}
+        struct Settings {
+            bool is_first_boot = true;
+            bool check_integrity_at_boot = false;
+            int music_volume = 75;
         };
 
-        if (auto err = glz::read_json(settings, json)) {
-            cout << "Failed to parse settings" << endl;
-        }
-    }
+        /*-----------*/
+        /* Constants */
+        /*-----------*/
 
-    bool check_is_first_boot() {
-        if (settings.is_first_boot)
-            return true;
+        // Don't error out when unknown fields are found, to allow users to downgrade.
+        constexpr glz::opts read_opts = { .error_on_unknown_keys = false };
 
-        return false;
-    }
+        constexpr glz::opts write_opts = { .prettify = true };
 
-    void run_first_boot_check() {
-        if (!isFirstBoot)
-            return;
+        const std::filesystem::path settings_path = THEMIIFY_ROOT / "settings.json";
 
-        SettingsPopup::open(SettingsPopup::OpenState::force_integrity);
+        /*-----------*/
+        /* Variables */
+        /*-----------*/
 
-        settings.is_first_boot = false;
+        bool bootIntegrityCheckPending;
+
+        Settings settings;
+
+        /*-----------------------*/
+        /* Function declarations */
+        /*-----------------------*/
+
+        void
+        load_settings();
+
+        void
         save_settings();
 
-        isFirstBoot = false;
-    }
+        /*----------------------*/
+        /* Function definitions */
+        /*----------------------*/
 
-    void run_boot_integrity_check() {
-        if (!bootIntegrityCheckPending)
-            return;
+        void
+        load_settings() {
+            TRACE_FUNC;
+            try {
+                glz::ex::read_file_json<read_opts>(settings,
+                                                   settings_path.string(),
+                                                   std::string{});
+            }
+            catch (std::exception& e) {
+                cerr << "ERROR loading settings: " << e.what() << endl;
+            }
+        }
 
-        SettingsPopup::open(SettingsPopup::OpenState::force_integrity);
+        void
+        save_settings() {
+            TRACE_FUNC;
+            try {
+                create_directories(THEMIIFY_ROOT);
+                glz::ex::write_file_json<write_opts>(settings,
+                                                     settings_path.string(),
+                                                     std::string{});
+            }
+            catch (std::exception& e) {
+                cerr << "ERROR saving settings: " << e.what() << endl;
+            }
+        }
 
-        bootIntegrityCheckPending = false;
-    }
+    } // namespace
 
-    void initialize(SDL_Renderer * /*renderer*/) {
-        cout << "Hello from SettingsScreen init!" << endl;
+    /*------------------*/
+    /* Public functions */
+    /*------------------*/
+
+    void
+    initialize(SDL_Renderer * /*renderer*/) {
+        TRACE_FUNC;
+
+        create_directories(THEMIIFY_ROOT);
 
         load_settings();
 
-        isFirstBoot = settings.is_first_boot;
-        checkIntegrityAtBoot = settings.check_integrity_at_boot;
         bootIntegrityCheckPending = settings.check_integrity_at_boot;
-        volume = settings.music_volume;
-        int mix_volume = (volume * MIX_MAX_VOLUME) / 100;
+        int mix_volume = (settings.music_volume * MIX_MAX_VOLUME) / 100;
         Mix_VolumeMusic(mix_volume);
     }
 
-    void finalize() {
-        cout << "Hello from SettingsScreen finalize" << endl;
+    void
+    finalize() {
+        TRACE_FUNC;
+
+        save_settings();
     }
 
-    void process_ui() {
+    void
+    process_ui() {
         using namespace ImGui::RAII;
 
 #ifdef DEBUG_BG_COLOR
@@ -150,48 +161,128 @@ namespace SettingsScreen {
             ImGui::Text(text);
         }
 
-        ImGui::Separator();
+        ImGui::SeparatorText("Special files");
+        {
+            Indent _;
+            if (ImGui::Button("Check integrity of Wii U Menu files")) {
+                SettingsPopup::open(SettingsPopup::OpenState::integrity);
+            }
 
-        ImGui::Spacing();
+            ImGui::SameLine();
 
-        if (ImGui::Button("Check integrity of Wii U Menu files")) {
-            SettingsPopup::open(SettingsPopup::OpenState::integrity);
+            ImGui::Checkbox("Check at every boot", settings.check_integrity_at_boot);
+
+            if (ImGui::Button("Dump Wii U Menu files")) {
+                SettingsPopup::open(SettingsPopup::OpenState::dump);
+            }
+
+            if (ImGui::Button("Clear Themiify cache")) {
+                SettingsPopup::open(SettingsPopup::OpenState::cache);
+            }
         }
 
-        ImGui::SameLine();
+        ImGui::SeparatorText("Sound options");
+        {
+            Indent _;
+            ImGui::Text("Background music volume level:");
+            if (ImGui::SliderInt("##volume", &settings.music_volume, 0, 100, "%d%%")) {
 
-        if (ImGui::Checkbox("Check at every boot", &checkIntegrityAtBoot)) {
-            settings.check_integrity_at_boot = checkIntegrityAtBoot;
-            save_settings();
+                int mix_volume = (settings.music_volume * MIX_MAX_VOLUME) / 100;
+                Mix_VolumeMusic(mix_volume);
+            }
         }
 
-        ImGui::Spacing();
+        ImGui::SeparatorText("StyleMiiU options");
+        {
+            Indent _;
 
-        if (ImGui::Button("Dump Wii U Menu files")) {
-            SettingsPopup::open(SettingsPopup::OpenState::dump);
-        }
+            if (auto cfg = PluginManager::GetConfig()) {
 
-        ImGui::Spacing();
+                ImGui::Checkbox("Enable plugin", cfg->themeManagerEnabled);
+                ImGui::SetItemTooltip("Set \"themeManagerEnabled\"");
 
-        if (ImGui::Button("Clear Themiify cache")) {
-            SettingsPopup::open(SettingsPopup::OpenState::cache);
-        }
+                bool shuffle_value = cfg->shuffleThemes;
+                if (ImGui::Checkbox("Shuffle themes", shuffle_value))
+                    PluginManager::ToggleShuffling();
+                ImGui::SetItemTooltip("Set \"suffleThemes\""); // NOTE: typo
 
+                ImGui::Checkbox("Mash up themes", cfg->mashupThemes);
+                ImGui::SetItemTooltip("Set \"mashupThemes\"");
 
-        ImGui::Spacing();
+                ImGui::Checkbox("Show notifications", cfg->showNotification);
+                ImGui::SetItemTooltip("Set \"showNotification\"");
 
-        ImGui::Separator();
+                if (ImGui::CollapsingHeader("Enabled themes:")) {
+                    Indent _2;
+                    const ImVec2 themes_size = {
+                        0,
+                        8 * ImGui::GetTextLineHeightWithSpacing()
+                    };
+                    if (Child enabled_themes{"enabled_themes",
+                                             themes_size,
+                                             ImGuiChildFlags_Borders}) {
+                        auto available_width = ImGui::GetContentRegionAvail().x;
+                        ItemWidth set_width{available_width};
+                        ThemeManager::ForEachInstalledTheme(
+                            [](std::size_t, const ThemeManager::ConstThemePtr& theme)
+                            {
+                                bool enabled = PluginManager::IsEnabled(theme->path);
+                                if (ImGui::Checkbox("##" + theme->path.filename().string(),
+                                                    enabled)) {
+                                    if (enabled)
+                                        PluginManager::Enable(theme->path);
+                                    else
+                                        PluginManager::Disable(theme->path);
+                                }
+                                ImGui::SameLine();
+                                ImGui::TextWrapped(theme->path.filename().string());
+                            }
+                        );
+                    }
+                }
 
-        ImGui::Text("Background music volume level:");
-        if (ImGui::SliderInt("##volume", &volume, 0, 100, "%d%%")) {
-            settings.music_volume = volume;
+                if (ImGui::Button("Manage installed themes..."))
+                    NavBar::set_current_tab(NavBar::Tab::manage_themes);
+                ImGui::SetItemTooltip("Set \"enabledThemes\"");
 
-            int mix_volume = (volume * MIX_MAX_VOLUME) / 100;
-            Mix_VolumeMusic(mix_volume);
+            } else {
+                ImGui::TextWrapped("Could not parse StyleMiiU configuration.");
+            }
 
-            save_settings();
+            if (ImGui::Button("Delete Style Mii U configuration")) {
+                PluginManager::DeleteConfig();
+            }
         }
 
         SettingsPopup::process_ui();
     }
-}
+
+    bool
+    check_is_first_boot() {
+        return settings.is_first_boot;
+    }
+
+    void
+    run_boot_integrity_check() {
+        if (!bootIntegrityCheckPending)
+            return;
+
+        SettingsPopup::open(SettingsPopup::OpenState::force_integrity);
+
+        bootIntegrityCheckPending = false;
+    }
+
+    void
+    run_first_boot_check() {
+        if (!settings.is_first_boot)
+            return;
+
+        SettingsPopup::open(SettingsPopup::OpenState::force_integrity);
+
+        settings.is_first_boot = false;
+        save_settings();
+
+        settings.is_first_boot = false;
+    }
+
+} // namespace SettingsScreen

@@ -2,7 +2,7 @@
  * Themiify - A theme manager for the Nintendo Wii U
  * Copyright (C) 2026 Fangal-Airbag
  * Copyright (C) 2026 AlphaCraft9658
- * Copyright (C) 2026  Daniel K. O. <dkosmari>
+ * Copyright (C) 2026 Daniel K. O. <dkosmari>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -23,15 +23,18 @@
 #include <SDL2/SDL_image.h>
 
 #include "ThemezerScreen.h"
-#include "ThemeDetailsPopup.h"
+
+#include "../DownloadManager.h"
+#include "../IconsFontAwesome4.h"
+#include "../ImageLoader.h"
+#include "../ThemeManager.h"
+#include "../ThemezerAPI.h"
+#include "../tracer.hpp"
+#include "../utils.h"
 #include "DownloadThemePopup.h"
 #include "InstallThemePopup.h"
 #include "QRCodePopup.h"
-#include "../utils.h"
-#include "../ImageLoader.h"
-#include "../ThemezerAPI.h"
-#include "../DownloadManager.h"
-#include "../IconsFontAwesome4.h"
+#include "ThemeDetailsPopup.h"
 
 // Define this to help seeing the padding and spacing values for windows.
 // #define DEBUG_BG_COLOR
@@ -55,8 +58,8 @@ namespace ThemezerScreen {
     SortOrder order = SortOrder::DESC;
 
     std::string query;
+    std::string quickid_query;
 
-    bool is_item_count_zero = false;
     bool fetching_theme_by_id = false;
     bool exact_id_mode = false;
     bool scroll_to_top = false;
@@ -66,8 +69,6 @@ namespace ThemezerScreen {
     std::optional<WiiuThemeSmall> exact_theme;
 
     SDL_Texture* themezer_logo = nullptr;
-
-    Mix_Chunk *qr_sfx;
 
     std::string sort_to_label(ItemSort arg) {
         switch (arg) {
@@ -108,6 +109,7 @@ namespace ThemezerScreen {
         exact_id_mode = true;
         exact_theme.reset();
 
+        // TODO: should have an error handler too
         ThemezerAPI::wiiu::theme(
             hex_id,
             [](const WiiuThemeFull& full_theme) {
@@ -125,6 +127,7 @@ namespace ThemezerScreen {
 
         page = new_page;
 
+        // TODO: should have an error handler too.
         ThemezerAPI::wiiu::themes({
                 .paginationArgs = {
                     .limit = 21,
@@ -140,27 +143,25 @@ namespace ThemezerScreen {
                 page_info = new_page_info;
                 themes = new_themes;
 
-                is_item_count_zero = page_info->itemCount == 0;
                 scroll_to_top = true;
             });
     }
 
     void initialize(SDL_Renderer* renderer) {
-        cout << "Hello from ThemezerScreen init!" << endl;
+        TRACE_FUNC;
 
         themezer_logo = IMG_LoadTexture(renderer, "fs:/vol/content/ui/themezer-logo.png");
-        qr_sfx = Mix_LoadWAV("fs:/vol/content/sound/qr-scan.wav");
 
         first_fetch = true;
     }
 
     void finalize() {
+        TRACE_FUNC;
+
         if (themezer_logo) {
             SDL_DestroyTexture(themezer_logo);
             themezer_logo = nullptr;
         }
-
-        cout << "Hello from ThemezerScreen finalize!" << endl;
     }
 
     static void text_limited(float width, const std::string& text) {
@@ -213,28 +214,238 @@ namespace ThemezerScreen {
             ImGui::Image((ImTextureID)img, img_size);
         }
 
+
         {
+            // Show theme name to the left, status glyph to the right.
             Font font{nullptr, 24};
-            text_limited(inner_size.x, theme.name);
+
+            std::string status_label;
+            ImVec4 status_color;
+            if (auto itheme = ThemeManager::GetThemeByID(theme.hexId)) {
+                // If version mismatch OR it's a legacy theme, suggest an update.
+                if (itheme->metadata.themeVersion != theme.updatedAt
+                    ||
+                    !itheme->legacyMetadataPath.empty()) {
+                    status_label = ICON_FA_REFRESH;
+                    status_color = { 1.0f, 0.7f, 0.0f, 1.0f };
+                } else {
+                    status_label = ICON_FA_CHECK;
+                    status_color = { 0.0f, 1.0f, 0.3f, 1.0f };
+                }
+            }
+
+            float name_width = inner_size.x;
+            if (!status_label.empty())
+                name_width -= style.ItemSpacing.x + ImGui::CalcTextSize(status_label).x;
+
+            text_limited(name_width, theme.name);
+
+            if (!status_label.empty()) {
+                ImGui::SameLine();
+
+                std::optional<StyleColor> status_glyph_color;
+                if (!dark_text)
+                    status_glyph_color.emplace(ImGuiCol_Text, status_color);
+                ImGui::Text(status_label);
+            }
         }
 
         {
-            // Show author aligned to the left, downloads to the right.
+            // Show author to the left, downloads to the right.
             Font font{nullptr, 18};
+
             std::string downloads_label = ICON_FA_DOWNLOAD " "
                 + std::to_string(theme.downloadCount);
             float downloads_width = ImGui::CalcTextSize(downloads_label).x;
+
             float author_width = inner_size.x - downloads_width - style.ItemSpacing.x;
             text_limited(author_width, "by " + theme.creator.username);
+
             ImGui::SameLine();
-            ImGui::SetCursorPosX(inner_size.x - downloads_width);
+
             ImGui::Text(downloads_label);
+        }
+    }
+
+    void show_toolbar() {
+        using namespace ImGui::RAII;
+
+        const auto& style = ImGui::GetStyle();
+
+        const bool themezer_busy = ThemezerAPI::is_busy();
+
+        SDL_WiiUSetSWKBDKeyboardMode(SDL_WIIU_SWKBD_KEYBOARD_MODE_RESTRICTED);
+        SDL_WiiUSetSWKBDOKLabel("Search");
+        SDL_WiiUSetSWKBDHighlightInitialText(SDL_TRUE);
+
+        /*-------------------------------------------------------------------------------.
+        | Layout:                                                                        |
+        |                                                                                |
+        | [SEARCH] [QUICKID] [QR] [SORT] [REVERSE] [NAV-PREV] [NAV-PAGE] [NAV-NEXT]      |
+        |                                                                                |
+        | Only SEARCH is stretched, so we need to calculate the width of everything that |
+        | comes after.                                                                   |
+        `-------------------------------------------------------------------------------*/
+
+        const std::string quickid_label = "QuickID";
+        const auto quickid_size = ImGui::CalcTextSize(quickid_label) + 2 * style.FramePadding;
+
+        const std::string qr_label = ICON_FA_QRCODE;
+        const auto qr_size = ImGui::CalcTextSize(qr_label) + 2 * style.FramePadding;
+
+        const float sort_width = 220;
+
+        const std::string reverse_label = order_to_label(order);
+        const auto reverse_size = ImGui::CalcTextSize(reverse_label) + 2 * style.FramePadding;
+
+        const std::string nav_prev_label = ICON_FA_CHEVRON_LEFT;
+        const auto nav_prev_size = ImGui::CalcTextSize(nav_prev_label) + 2 * style.FramePadding;
+
+        const std::string nav_next_label = ICON_FA_CHEVRON_RIGHT;
+        const auto nav_next_size = ImGui::CalcTextSize(nav_next_label) + 2 * style.FramePadding;
+
+        std::string nav_page_label;
+        if (exact_id_mode) {
+            nav_page_label = "";
+        } else if (page_info) {
+            nav_page_label =
+                "Page "s
+                + std::to_string(page_info->page)
+                + "/"s
+                + std::to_string(page_info->pageCount);
+        }
+        const float nav_page_width = ImGui::CalcTextSize(nav_page_label).x;
+
+        const float space = style.ItemSpacing.x;
+        const float search_width =
+            ImGui::GetContentRegionAvail().x
+            - space
+            - quickid_size.x
+            - space
+            - qr_size.x
+            - space
+            - sort_width
+            - space
+            - reverse_size.x
+            - space
+            - nav_prev_size.x
+            - space
+            - nav_page_width
+            - space
+            - nav_next_size.x;
+
+        {
+            Disabled disable_if{themezer_busy};
+
+            ImGui::SetNextItemWidth(search_width);
+            if (ImGui::InputTextWithHint("##network_search"s, "Search..."s, query)) {
+                cout << "Searching: " << query << endl;
+
+                exact_id_mode = false;
+                exact_theme.reset();
+                fetching_theme_by_id = false;
+
+                fetch_page(1);
+            }
+        }
+
+        ImGui::SameLine();
+
+        {
+            Disabled disable_if{themezer_busy};
+
+            ImGui::SetNextItemWidth(quickid_size.x);
+            if (ImGui::InputTextWithHint("##id_search"s, quickid_label, quickid_query)) {
+                if (quickid_query.starts_with("T") || quickid_query.starts_with("t")) {
+                    cout << "Searching QuickID: " << quickid_query << endl;
+                    std::string hexId = as_upper_case(quickid_query.substr(1));
+                    fetch_theme_by_id(hexId);
+                }
+            }
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button(qr_label, qr_size))
+            QRCodePopup::open();
+
+        ImGui::SameLine();
+
+        {
+            Disabled disable_if{themezer_busy};
+
+            ImGui::SetNextItemWidth(sort_width);
+            if (Combo sort_combo{"##sort_combo"s, sort_to_label(sort)}) {
+                for (auto new_sort : ThemezerAPI::ItemSortList) {
+                    if (ImGui::Selectable(sort_to_label(new_sort),
+                                          new_sort == sort)) {
+                        sort = new_sort;
+
+                        exact_id_mode = false;
+                        exact_theme.reset();
+                        fetching_theme_by_id = false;
+
+                        fetch_page(1);
+                    }
+                }
+            }
+        }
+
+        ImGui::SameLine();
+
+        {
+            Disabled disable_if{themezer_busy};
+            if (ImGui::Button(reverse_label, reverse_size)) {
+                order = order == SortOrder::ASC ? SortOrder::DESC : SortOrder::ASC;
+
+                exact_id_mode = false;
+                exact_theme.reset();
+                fetching_theme_by_id = false;
+
+                fetch_page(1);
+            }
+        }
+
+        ImGui::SameLine();
+
+        // Navigation controls
+        {
+            Disabled disabled_if{themezer_busy || exact_id_mode};
+
+            {
+                bool first_page = true;
+                if (page_info)
+                    first_page = page_info->page == 1;
+
+                Disabled disable_if{first_page};
+
+                if (ImGui::Button(nav_prev_label, nav_prev_size))
+                    fetch_page(page - 1);
+            }
+
+            ImGui::SameLine();
+
+            ImGui::Text(nav_page_label);
+
+            ImGui::SameLine();
+
+            {
+                bool last_page = true;
+                if (page_info)
+                    last_page = page_info->page == page_info->pageCount;
+
+                Disabled disable_if{last_page};
+
+                if (ImGui::Button(nav_next_label, nav_next_size))
+                    fetch_page(page + 1);
+            }
         }
     }
 
     void process_ui() {
         using namespace ImGui::RAII;
 
+        const bool themezer_busy = ThemezerAPI::is_busy();
         {
             // NOTE: use a scope to contain all the temporary style changes, so they don't
             // leak into the popups at the bottom.
@@ -253,129 +464,11 @@ namespace ThemezerScreen {
                     ImGui::Image((ImTextureID)themezer_logo, {300, 86});
                 }
 
-                // Sort and Filter controls
-                {
-                    Disabled disable_when{ThemezerAPI::is_busy()};
-
-                    if (Child filter_order_search_box{
-                            "FilterOrderSearchBox",
-                            {700.0f, 75.0f},
-                            ImGuiChildFlags_NavFlattened
-                        }) {
-
-                        SDL_WiiUSetSWKBDKeyboardMode(SDL_WIIU_SWKBD_KEYBOARD_MODE_RESTRICTED);
-                        SDL_WiiUSetSWKBDHintText("Input the name or ID (starting with 'T') of\n"
-                                                 "a theme to search for it...");
-                        SDL_WiiUSetSWKBDOKLabel("Search");
-                        SDL_WiiUSetSWKBDHighlightInitialText(SDL_TRUE);
-
-                        ImGui::SetNextItemWidth(280);
-                        if (ImGui::InputTextWithHint("##network_search"s, "Search..."s, query)) {
-                            cout << "Searching: " << query << endl;
-
-                            exact_id_mode = false;
-                            exact_theme.reset();
-                            fetching_theme_by_id = false;
-
-                            fetch_page(1);
-                        }
-
-                        ImGui::SameLine();
-
-                        if (ImGui::Button(ICON_FA_QRCODE)) {
-                            QRCodePopup::show(qr_sfx);
-                        }
-
-                        ImGui::SameLine();
-
-                        ImGui::SetNextItemWidth(220);
-                        if (Combo sort_combo{"##sort_combo"s, sort_to_label(sort)}) {
-                            for (auto new_sort : ThemezerAPI::ItemSortList) {
-                                if (ImGui::Selectable(sort_to_label(new_sort), new_sort == sort)) {
-                                    sort = new_sort;
-
-                                    exact_id_mode = false;
-                                    exact_theme.reset();
-                                    fetching_theme_by_id = false;
-
-                                    fetch_page(1);
-                                }
-                            }
-                        }
-
-                        ImGui::SameLine();
-
-                        if (ImGui::Button(order_to_label(order))) {
-                            order = order == SortOrder::ASC ? SortOrder::DESC : SortOrder::ASC;
-
-                            exact_id_mode = false;
-                            exact_theme.reset();
-                            fetching_theme_by_id = false;
-
-                            fetch_page(1);
-                        }
-                    }
-                }
-
-                ImGui::SameLine();
-
-                // Navigation controls
-                {
-                    Disabled disabled_when{ThemezerAPI::is_busy() || exact_id_mode};
-
-                    auto& new_page_info = page_info;
-
-                    {
-                        bool first_page = true;
-                        if (new_page_info)
-                            first_page = new_page_info->page == 1;
-
-                        Disabled disable_when{first_page};
-
-                        if (ImGui::Button(ICON_FA_CHEVRON_LEFT))
-                            fetch_page(page - 1);
-                    }
-
-                    ImGui::SameLine();
-
-                    if (exact_id_mode) {
-                        ImGui::Text("ID Result");
-                    }
-                    else if (new_page_info) {
-                        ImGui::Text("Page %u/%u", new_page_info->page, new_page_info->pageCount);
-                    }
-
-                    ImGui::SameLine();
-
-                    {
-                        bool last_page = true;
-                        if (new_page_info)
-                            last_page = new_page_info->page == new_page_info->pageCount;
-
-                        Disabled disable_when{last_page};
-
-                        if (ImGui::Button(ICON_FA_CHEVRON_RIGHT))
-                            fetch_page(page + 1);
-                    }
-                }
-
-                // Trigger exact ID lookup after normal search returns 0 results
-                if (!ThemezerAPI::is_busy() &&
-                    is_item_count_zero &&
-                    query.starts_with('T') &&
-                    !fetching_theme_by_id &&
-                    !exact_id_mode) {
-
-                    std::string hex_id = query.substr(1);
-
-                    cout << "Searching exact Themezer ID: " << hex_id << endl;
-
-                    fetch_theme_by_id(hex_id);
-                }
+                show_toolbar();
 
                 // Themes List
                 {
-                    Disabled disable_when{ThemezerAPI::is_busy()};
+                    Disabled disable_if{themezer_busy};
 
 #ifdef DEBUG_BG_COLOR
                     StyleColor brown_bg{ImGuiCol_ChildBg, {0.3, 0.3, 0.0, 1.0}};
@@ -395,7 +488,8 @@ namespace ThemezerScreen {
                                 ImGui::Text("Searching by exact Themezer ID...");
                                 if (ImGui::Button("Cancel Search")) {
                                     exact_id_mode = false;
-                                    query = "";
+                                    query.clear();
+                                    quickid_query.clear();
                                     fetch_page(1);
                                 }
                             }
@@ -404,7 +498,8 @@ namespace ThemezerScreen {
                                 ImGui::Spacing();
                                 if (ImGui::Button("Clear Search")) {
                                     exact_id_mode = false;
-                                    query = "";
+                                    query.clear();
+                                    quickid_query.clear();
                                     fetch_page(1);
                                 }
                             }
@@ -435,10 +530,10 @@ namespace ThemezerScreen {
             }
         }
 
-        ThemeDetailsPopup::process_ui();
         DownloadThemePopup::process_ui();
         InstallThemePopup::process_ui();
         QRCodePopup::process_ui();
+        ThemeDetailsPopup::process_ui();
 
         if (first_fetch) {
             fetch_page(1);
