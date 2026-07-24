@@ -37,6 +37,9 @@ using std::endl;
 // Define this to help seeing the padding and spacing values for windows.
 // #define DEBUG_BG_COLOR
 
+// Enable to inject stylemiiu missing state
+// #define DEBUG_INJECT_STYLEMIIU_MISSING
+
 namespace HomeScreen {
 
     using ThemeManager::Theme;
@@ -59,6 +62,9 @@ namespace HomeScreen {
         styleMiiUExists = PluginManager::IsInstalled();
         if (!styleMiiUExists)
             queueStyleMiiUPrompt = true;
+#ifdef DEBUG_INJECT_STYLEMIIU_MISSING
+        queueStyleMiiUPrompt = true;
+#endif
 
         cout << "styleMiiUExists: " << styleMiiUExists << endl;
 
@@ -209,7 +215,7 @@ namespace HomeScreen {
         {
             Indent _;
             ImGui::Bullet();
-            ImGui::TextLink("https://github.com/Themiify-hb/Themiify");
+            ImGui::TextLink("https://github.com/ThemeCafe/Themiify");
         }
 
         ImGui::Spacing();

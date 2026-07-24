@@ -13,6 +13,7 @@
 #include "../IconsFontAwesome4.h"
 #include "../UI.h"
 #include "../utils.h"
+#include "../thread_safe.hpp"
 
 #include <coreinit/systeminfo.h>
 #include <sysapp/title.h>
@@ -29,6 +30,15 @@
 
 #include <zlib.h>
 
+// Enable to inject cache error state.
+// #define DEBUG_INJECT_CACHE_ERROR
+
+// Enable to ninject dump error state
+// #define DEBUG_INJECT_DUMP_ERROR
+
+// Enable to inject integrity error state.
+// #define DEBUG_INJECT_INTEGRITY_ERROR
+
 using std::cout;
 using std::endl;
 using namespace std::literals;
@@ -43,10 +53,11 @@ namespace SettingsPopup {
 
         enum class State {
             hidden,
-            stylmiiu_error,
+            stylemiiu_error,
             integrity_confirmation,
             checking_integrity,
-            integrity_checked,
+            integrity_success,
+            integrity_error,
             dump_confirmation,
             dumping,
             dump_completed,
@@ -54,7 +65,7 @@ namespace SettingsPopup {
             cache_confirmation,
             clearing_cache,
             cache_cleared,
-            cache_error,
+            cache_clear_error,
         };
 
         enum class Region {
@@ -92,9 +103,15 @@ namespace SettingsPopup {
         };
 
         const std::array<FileIntegrityInfo, 16> integrity_files{{
+#ifndef DEBUG_INJECT_INTEGRITY_ERROR
             {"Common/Package/Men2.pack",               0x946CD8A2},
             {"Common/Package/Men.pack",                0xB9A4343A},
             {"Common/Sound/Men/cafe_barista_men.bfsar",0xC9C16521},
+#else
+            {"Common/Package/Men2.pack",               0x00000000},
+            {"Common/Package/Men.pack",                0x00000000},
+            {"Common/Sound/Men/cafe_barista_men.bfsar",0x00000000},
+#endif
 
             {"UsEnglish/Message/AllMessage.szs",       0x9C91A249},
             {"UsFrench/Message/AllMessage.szs",        0xF80483EE},
@@ -128,17 +145,14 @@ namespace SettingsPopup {
 
         std::filesystem::path menu_content_path;
 
-        // TODO: clean up this worker thread mess
         std::jthread worker_thread;
         std::atomic_bool worker_done = false;
         std::atomic_bool worker_success = false;
-        std::mutex worker_mutex;
-
 
         std::vector<std::filesystem::path> full_all_message_paths;
         std::vector<std::filesystem::path> cache_all_message_paths;
 
-        std::vector<std::filesystem::path> modified_files;
+        thread_safe<std::vector<std::filesystem::path>> safe_modified_files;
 
         /*-----------------------*/
         /* Function declarations */
@@ -167,13 +181,13 @@ namespace SettingsPopup {
         GetMenuContentPath();
 
         void
+        show_cache_clear_error();
+
+        void
         show_cache_cleared();
 
         void
         show_cache_confirmation();
-
-        void
-        show_cache_error();
 
         void
         show_checking_integrity();
@@ -194,10 +208,13 @@ namespace SettingsPopup {
         show_dumping();
 
         void
-        show_integrity_checked();
+        show_integrity_confirmation();
 
         void
-        show_integrity_confirmation();
+        show_integrity_error();
+
+        void
+        show_integrity_success();
 
         void
         show_stylemiiu_error();
@@ -217,9 +234,10 @@ namespace SettingsPopup {
 
         void
         action_check_integrity() {
-            modified_files.clear();
-
+            state = State::checking_integrity;
             start_worker([] {
+                safe_modified_files.lock()->clear();
+                bool result = true;
                 for (const auto& entry : integrity_files) {
                     auto full_path = menu_content_path / entry.relative_path;
 
@@ -229,19 +247,18 @@ namespace SettingsPopup {
                     uint32_t crc = CalculateCRC32(full_path);
 
                     if (crc != entry.expected_crc) {
-                        std::scoped_lock lock{worker_mutex};
-                        modified_files.push_back(entry.relative_path);
+                        result = false;
+                        auto modified_files = safe_modified_files.lock();
+                        modified_files->push_back(entry.relative_path);
                     }
                 }
-
-                return true;
+                return result;
             });
-
-            state = State::checking_integrity;
         }
 
         void
         action_clear_cache() {
+            state = State::clearing_cache;
             start_worker([] {
                 if (delete_thumbnails)
                     DeletePath(THEMIIFY_THUMBNAILS);
@@ -265,14 +282,13 @@ namespace SettingsPopup {
 
                 return true;
             });
-
-            state = State::clearing_cache;
         }
 
         void
         action_dump_files() {
+            state = State::dumping;
             start_worker([] {
-                bool dump_success = true;
+                bool result = true;
 
                 auto dump_one = [](const std::filesystem::path& src,
                                    const std::filesystem::path& dst) {
@@ -282,34 +298,32 @@ namespace SettingsPopup {
                     return exists(dst) && file_size(dst) > 0;
                 };
 
-                dump_success &= dump_one(
+                result &= dump_one(
                     menu_content_path / MEN_PATH,
                     THEMIIFY_ROOT / "cache" / MEN_PATH
                 );
 
-                dump_success &= dump_one(
+                result &= dump_one(
                     menu_content_path / MEN2_PATH,
                     THEMIIFY_ROOT / "cache" / MEN2_PATH
                 );
 
-                dump_success &= dump_one(
+                result &= dump_one(
                     menu_content_path / CAFE_BARISTA_MEN_PATH,
                     THEMIIFY_ROOT / "cache" / CAFE_BARISTA_MEN_PATH
                 );
 
                 if (dump_allmessage) {
                     for (size_t i = 0; i < full_all_message_paths.size(); ++i) {
-                        dump_success &= dump_one(
+                        result &= dump_one(
                             full_all_message_paths.at(i),
                             cache_all_message_paths.at(i)
                         );
                     }
                 }
 
-                return dump_success;
+                return result;
             });
-
-            state = State::dumping;
         }
 
         uint32_t
@@ -406,6 +420,17 @@ namespace SettingsPopup {
         }
 
         void
+        show_cache_clear_error() {
+            UI::Title("Error Clearing Cache");
+
+            ImGui::Text("One or more files could not be removed from the cache");
+
+            UI::ButtonHBox buttons;
+            buttons.add(ICON_FA_TIMES " Close", true, action_close);
+            buttons.show();
+        }
+
+        void
         show_cache_cleared() {
             UI::Title("Cache Cleared");
 
@@ -421,7 +446,7 @@ namespace SettingsPopup {
             UI::Title("Clear Cache Confirmation");
 
             ImGui::Text("Would you like to delete your Themiify cache located at:\n"
-                        "sd:/themiify/cache ?\n"
+                        "SD:/themiify/cache ?\n"
                         "\n"
                         "Doing so will delete all dumped Wii U Menu files");
 
@@ -434,17 +459,6 @@ namespace SettingsPopup {
         }
 
         void
-        show_cache_error() {
-            UI::Title("Error Clearing Cache");
-
-            ImGui::Text("One or more files could not be removed from the cache");
-
-            UI::ButtonHBox buttons;
-            buttons.add(ICON_FA_TIMES " Close", true, action_close);
-            buttons.show();
-        }
-
-        void
         show_checking_integrity() {
             UI::Title("Checking...");
 
@@ -453,8 +467,8 @@ namespace SettingsPopup {
             if (worker_done) {
                 worker_thread = {};
                 state = worker_success
-                    ? State::integrity_checked
-                    : State::cache_error;
+                    ? State::integrity_success
+                    : State::integrity_error;
             }
         }
 
@@ -466,9 +480,13 @@ namespace SettingsPopup {
 
             if (worker_done) {
                 worker_thread = {};
+#ifndef DEBUG_INJECT_CACHE_ERROR
                 state = worker_success
                     ? State::cache_cleared
-                    : State::cache_error;
+                    : State::cache_clear_error;
+#else
+                state = State::cache_clear_error;
+#endif
             }
         }
 
@@ -479,7 +497,7 @@ namespace SettingsPopup {
             ImGui::Text("The dump has been sucessfully completed\n"
                         "\n"
                         "You can find your dumped files at:\n"
-                        "sd:/themiify/cache");
+                        "SD:/themiify/cache");
 
             UI::ButtonHBox buttons;
             buttons.add(ICON_FA_TIMES " Close", true, action_close);
@@ -531,35 +549,10 @@ namespace SettingsPopup {
                 state = worker_success
                     ? State::dump_completed
                     : State::dump_error;
+#ifdef DEBUG_INJECT_DUMP_ERROR
+                state = State::dump_error;
+#endif
             }
-        }
-
-        void
-        show_integrity_checked() {
-            using namespace ImGui::RAII;
-
-            UI::Title("Integrity Checked");
-
-            if (modified_files.empty()) {
-                ImGui::Text("All your menu files are clean and ready for use with Themiify!");
-            }
-            else {
-                ImGui::Text("The following files appear to be modified: ");
-
-                {
-                    Indent _;
-                    for (auto &file : modified_files) {
-                        ImGui::Text(file.string());
-                    }
-                }
-
-                ImGui::TextWrapped("Please consult the Theme Cafe docs for steps to "
-                                   "restore your original files.");
-            }
-
-            UI::ButtonHBox buttons;
-            buttons.add(ICON_FA_TIMES " Close", true, action_close);
-            buttons.show();
         }
 
         void
@@ -572,7 +565,7 @@ namespace SettingsPopup {
                 "\n"
                 "If your files have been modified, Themiify will always fail to install themes\n"
                 "until you either restore clean files to your NAND, or place clean files\n"
-                "in sd:/themiify/cache.\n"
+                "in SD:/themiify/cache\n"
                 "\n"
                 "Please check the Theme Café Docs for more info."
             );
@@ -584,15 +577,49 @@ namespace SettingsPopup {
         }
 
         void
+        show_integrity_error() {
+            using namespace ImGui::RAII;
+
+            UI::Title("Integrity Check Error!");
+
+            ImGui::Text("The following files appear to be modified: ");
+
+            {
+                Indent _;
+                auto modified_files = safe_modified_files.c_lock();
+                for (auto &file : *modified_files) {
+                    ImGui::Text(file.string());
+                }
+            }
+
+            ImGui::TextWrapped("Please consult the Theme Café docs for steps to "
+                               "restore your original files.");
+
+            UI::ButtonHBox buttons;
+            buttons.add(ICON_FA_TIMES " Close", action_close);
+            buttons.show();
+        }
+
+        void
+        show_integrity_success() {
+            UI::Title("Integrity Checked");
+
+            ImGui::Text("All your menu files are clean and ready for use with Themiify!");
+
+            UI::ButtonHBox buttons;
+            buttons.add(ICON_FA_TIMES " Close", true, action_close);
+            buttons.show();
+        }
+
+        void
         show_stylemiiu_error() {
             UI::Title("StyleMiiU Not Found!");
 
             ImGui::Text("The StyleMiiU plugin could not be found!\n"
                         "\n"
                         "For your installed themes to work in the Wii U Menu you will need to install\n"
-                        "this plugin from either the Homebrew App Store or from:\n"
-                        "\n"
-                        "github.com/Themiify-hb/StyleMiiU-Plugin/releases/latest");
+                        "this plugin from either the Homebrew App Store or from:\n");
+            ImGui::TextLink("https://github.com/ThemeCafe/Themiify/releases/latest");
 
 
             UI::ButtonHBox buttons;
@@ -643,7 +670,7 @@ namespace SettingsPopup {
 
         full_all_message_paths.clear();
         cache_all_message_paths.clear();
-        modified_files.clear();
+        safe_modified_files.lock()->clear();
 
         for (const auto& path : all_message_szs_locations) {
             switch (region) {
@@ -677,33 +704,13 @@ namespace SettingsPopup {
 
         switch (openState) {
             case OpenState::stylemiiu:
-                state = State::stylmiiu_error;
+                state = State::stylemiiu_error;
                 break;
             case OpenState::integrity:
                 state = State::integrity_confirmation;
                 break;
             case OpenState::force_integrity:
-                modified_files.clear();
-
-                start_worker([] {
-                    for (const auto& entry : integrity_files) {
-                        auto full_path = menu_content_path / entry.relative_path;
-
-                        if (!exists(full_path))
-                            continue;
-
-                        uint32_t crc = CalculateCRC32(full_path);
-
-                        if (crc != entry.expected_crc) {
-                            std::scoped_lock lock{worker_mutex};
-                            modified_files.push_back(entry.relative_path);
-                        }
-                    }
-
-                    return true;
-                });
-
-                state = State::checking_integrity;
+                action_check_integrity();
                 break;
             case OpenState::dump:
                 state = State::dump_confirmation;
@@ -746,7 +753,7 @@ namespace SettingsPopup {
         }
 
         switch (state) {
-            case State::stylmiiu_error:
+            case State::stylemiiu_error:
                 show_stylemiiu_error();
                 break;
 
@@ -758,8 +765,12 @@ namespace SettingsPopup {
                 show_checking_integrity();
                 break;
 
-            case State::integrity_checked:
-                show_integrity_checked();
+            case State::integrity_success:
+                show_integrity_success();
+                break;
+
+            case State::integrity_error:
+                show_integrity_error();
                 break;
 
             case State::dump_confirmation:
@@ -790,8 +801,8 @@ namespace SettingsPopup {
                 show_cache_cleared();
                 break;
 
-            case State::cache_error:
-                show_cache_error();
+            case State::cache_clear_error:
+                show_cache_clear_error();
                 break;
 
             default:
