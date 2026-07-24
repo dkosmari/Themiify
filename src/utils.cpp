@@ -8,7 +8,6 @@
  */
 
 #include <cctype>
-#include <cmath>
 #include <cstdio>
 #include <iostream>
 #include <locale>
@@ -189,12 +188,4 @@ join(const std::vector<std::string>& tokens,
     }
 
     return result;
-}
-
-ImVec2
-max(const ImVec2& a,
-    const ImVec2& b)
-    noexcept
-{
-    return { std::fmax(a.x, b.x), std::fmax(a.y, b.y) };
 }

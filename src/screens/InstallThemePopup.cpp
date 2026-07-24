@@ -18,6 +18,7 @@
 
 #include "../IconsFontAwesome4.h"
 #include "../PluginManager.h"
+#include "../UI.h"
 #include "../utils.h"
 #include "ManageThemesScreen.h"
 
@@ -30,6 +31,10 @@ namespace InstallThemePopup {
 
     namespace {
 
+        /*-------*/
+        /* Types */
+        /*-------*/
+
         enum class State {
             hidden,
             confirmation,
@@ -39,10 +44,19 @@ namespace InstallThemePopup {
             success,
         };
 
+        /*-----------*/
+        /* Constants */
+        /*-----------*/
+
+        const std::string popup_id = "Install Theme";
+
+        /*-----------*/
+        /* Variables */
+        /*-----------*/
+
         State state = State::hidden;
 
         bool popup_queued;
-        const std::string popup_id = "Install Theme"s;
 
         std::filesystem::path utheme;
         ThemeManager::ConstMetadataPtr metadata;
@@ -52,24 +66,51 @@ namespace InstallThemePopup {
         std::string error_message;
         bool scroll_to_bottom;
 
-        void
-        progress_handler(const std::string& msg) {
-            cout << "PROGRESS: " << msg << endl;
-            progress_messages.push_back(msg);
-            scroll_to_bottom = true;
-        }
+        /*-----------------------*/
+        /* Function declarations */
+        /*-----------------------*/
 
         void
-        success_handler() {
-            state = State::success;
-            scroll_to_bottom = true;
-        }
+        error_handler(const std::string& msg);
 
-        void error_handler(const std::string& msg)
+        void
+        progress_handler(const std::string& msg);
+
+        void
+        show_messages();
+
+        void
+        show_state_confirmation();
+
+        void
+        show_state_error();
+
+        void
+        show_state_start_install();
+
+        void
+        show_state_success();
+
+        void
+        success_handler();
+
+        /*----------------------*/
+        /* Function definitions */
+        /*----------------------*/
+
+        void
+        error_handler(const std::string& msg)
         {
             cerr << "ERROR: " << msg << endl;
             error_message = msg;
             state = State::error;
+            scroll_to_bottom = true;
+        }
+
+        void
+        progress_handler(const std::string& msg) {
+            cout << "PROGRESS: " << msg << endl;
+            progress_messages.push_back(msg);
             scroll_to_bottom = true;
         }
 
@@ -109,9 +150,140 @@ namespace InstallThemePopup {
             }
         }
 
+        void
+        show_state_confirmation() {
+            UI::Title("Confirm theme installation");
+
+            ImGui::TextWrapped("Would you like to install:\n%s ?",
+                               metadata->themeName.c_str());
+
+            std::string enable_label = (PluginManager::IsShuffling() ? "Enable"s : "Apply"s)
+                + " theme after installation"s;
+            ImGui::Checkbox(enable_label, enable_theme);
+
+            UI::ButtonHBox buttons;
+            buttons.add(
+                ICON_FA_TIMES " Cancel",
+                []
+                {
+                    ImGui::CloseCurrentPopup();
+                    state = State::hidden;
+                }
+            );
+            buttons.add(
+                ICON_FA_COGS " Install",
+                true,
+                []
+                {
+                    state = State::start_install;
+                }
+            );
+            buttons.show();
+        }
+
+        void
+        show_state_error() {
+            UI::Title("Installation failed!");
+
+            show_messages();
+
+            UI::ButtonHBox buttons;
+            buttons.add(
+                ICON_FA_TIMES " Close",
+                true,
+                []
+                {
+                    ImGui::CloseCurrentPopup();
+                    state = State::hidden;
+                }
+            );
+            buttons.show();
+        }
+
+        void
+        show_state_installing() {
+            // TODO: set a window size instead.
+            // Dummy to have nicer window width here
+            ImGui::SetCursorPosX(800.0f);
+            ImGui::Dummy({0.0f, 0.0f});
+
+            UI::Title("Installing");
+
+            ImGui::TextWrapped("Installing %s...", metadata->themeName.c_str());
+
+            ImGui::TextWrapped("This may take time, do not turn off your Wii U.");
+
+            show_messages();
+
+            UI::ButtonHBox buttons;
+            buttons.add(
+                ICON_FA_TIMES " Cancel",
+                true,
+                []
+                {
+                    ThemeManager::CancelInstall();
+                }
+            );
+            buttons.show();
+        }
+
+        void
+        show_state_start_install() {
+            state = State::installing;
+            ThemeManager::Install(utheme,
+                                  metadata,
+                                  enable_theme,
+                                  progress_handler,
+                                  success_handler,
+                                  error_handler);
+        }
+
+        void
+        show_state_success() {
+            UI::Title("Installation successful!");
+
+            ImGui::TextWrapped(std::format("This file is not needed anymore:\n\"{}\".",
+                                           utheme.filename().string()));
+            ImGui::TextWrapped("Would you like to delete it?");
+
+            UI::ButtonHBox buttons;
+            buttons.add(
+                ICON_FA_DOWNLOAD " Keep",
+                []
+                {
+                    ImGui::CloseCurrentPopup();
+                    state = State::hidden;
+                }
+            );
+            buttons.add(
+                ICON_FA_TRASH " Delete",
+                true,
+                []
+                {
+                    DeletePath(utheme);
+                    ImGui::CloseCurrentPopup();
+                    state = State::hidden;
+                    ThemeManager::RefreshUThemes();
+                }
+            );
+            buttons.show();
+        }
+
+        void
+        success_handler() {
+            state = State::success;
+            scroll_to_bottom = true;
+        }
+
+
     } // namespace
 
-    void open(const std::filesystem::path &utheme_,
+    /*------------------*/
+    /* Public functions */
+    /*------------------*/
+
+    void
+    open(const std::filesystem::path &utheme_,
               const ThemeManager::ConstMetadataPtr &metadata_,
               bool skipConfirmation,
               bool enableTheme) {
@@ -130,138 +302,8 @@ namespace InstallThemePopup {
         error_message.clear();
     }
 
-    void show_state_confirmation() {
-        const auto &style = ImGui::GetStyle();
-
-        ImGui::TextWrapped("Would you like to install the theme:\n%s ?",
-                           metadata->themeName.c_str());
-
-        std::string enable_label = (PluginManager::IsShuffling() ? "Enable"s : "Apply"s)
-            + " theme after installation"s;
-        ImGui::Checkbox(enable_label, enable_theme);
-
-        ImVec2 button_size{180, 0};
-
-        float spacing = style.ItemSpacing.x;
-        float total_width = button_size.x * 2.0f + spacing;
-
-        float start_x = (ImGui::GetContentRegionAvail().x - total_width) * 0.5f;
-
-        if (start_x > 0.0f)
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-        if (ImGui::Button(ICON_FA_COGS " Install", button_size)) {
-            state = State::start_install;
-        }
-        ImGui::SetItemDefaultFocus();
-
-        ImGui::SameLine();
-
-        if (ImGui::Button(ICON_FA_TIMES " Cancel", button_size)) {
-            ImGui::CloseCurrentPopup();
-            state = State::hidden;
-        }
-    }
-
-    void show_state_start_install() {
-        state = State::installing;
-        ThemeManager::Install(utheme,
-                              metadata,
-                              enable_theme,
-                              progress_handler,
-                              success_handler,
-                              error_handler);
-    }
-
-    void show_state_installing() {
-        using namespace ImGui::RAII;
-
-        // Dummy to have nicer window width here
-        ImGui::SetCursorPosX(800.0f);
-        ImGui::Dummy({0.0f, 0.0f});
-        {
-            Font title_font{nullptr, 40};
-            ImGui::TextWrapped("Installing %s...", metadata->themeName.c_str());
-        }
-
-        ImGui::Separator();
-
-        ImGui::TextWrapped("This may take time, do not turn off your Wii U.");
-
-        show_messages();
-
-        ImVec2 button_size{180, 0};
-        float button_x = (ImGui::GetContentRegionAvail().x - button_size.x) * 0.5f;
-        if (button_x > 0.0f)
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + button_x);
-        if (ImGui::Button("Cancel", button_size))
-            ThemeManager::CancelInstall();
-    }
-
-    void show_state_error() {
-        using namespace ImGui::RAII;
-
-        {
-            Font title_font{nullptr, 50};
-            ImGui::Text("Installation failed!");
-        }
-
-        show_messages();
-
-        ImVec2 button_size{180, 0};
-
-        float start_x =
-            (ImGui::GetContentRegionAvail().x - button_size.x) * 0.5f;
-
-        if (start_x > 0.0f)
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-        if (ImGui::Button("Close", button_size)) {
-            ImGui::CloseCurrentPopup();
-            state = State::hidden;
-        }
-    }
-
-    void show_state_success() {
-        using namespace ImGui::RAII;
-
-        const auto &style = ImGui::GetStyle();
-
-        {
-            Font title_font{nullptr, 50};
-            ImGui::Text("Installation successful!");
-        }
-
-        ImGui::TextWrapped(std::format("This file is not needed anymore:\n\"{}\".",
-                                       utheme.filename().string()));
-        ImGui::TextWrapped("Would you like to delete it?");
-
-        ImVec2 button_size{180, 0};
-
-        float total_width = 2 * button_size.x + style.ItemSpacing.x;
-
-        float start_x = (ImGui::GetContentRegionAvail().x - total_width) / 2;
-
-        if (start_x > 0.0f)
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-        if (ImGui::Button("Delete", button_size)) {
-            DeletePath(utheme);
-            ImGui::CloseCurrentPopup();
-            state = State::hidden;
-            ThemeManager::RefreshUThemes();
-        }
-        ImGui::SetItemDefaultFocus();
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Keep", button_size)) {
-            ImGui::CloseCurrentPopup();
-            state = State::hidden;
-        }
-    }
-
-    void process_ui() {
+    void
+    process_ui() {
         using namespace ImGui::RAII;
         if (state == State::hidden)
             return;
@@ -316,4 +358,5 @@ namespace InstallThemePopup {
                 ;
         }
     }
-}
+
+} // namespace InstallThemePopup

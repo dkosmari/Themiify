@@ -13,10 +13,14 @@
 #include "../ThemeManager.h"
 
 namespace InstallThemePopup {
-    void open(const std::filesystem::path &utheme,
-              const ThemeManager::ConstMetadataPtr &metadata,
-              bool skipConfirmation,
-              bool enableTheme);
 
-    void process_ui();
-}
+    void
+    open(const std::filesystem::path &utheme,
+         const ThemeManager::ConstMetadataPtr &metadata,
+         bool skipConfirmation,
+         bool enableTheme);
+
+    void
+    process_ui();
+
+} // namespace InstallThemePopup

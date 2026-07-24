@@ -176,6 +176,7 @@ namespace ThemeManager {
         std::jthread refresh_themes_thread;
         std::jthread refresh_uthemes_thread;
         std::jthread install_thread;
+        std::jthread uninstall_thread;
 
         async_queue<Task> pending_tasks;
 
@@ -235,6 +236,9 @@ namespace ThemeManager {
 
         std::string
         to_string(Hips::Result res);
+
+        void
+        UninstallThread(ConstThemePtr theme);
 
         /*----------------------*/
         /* Function definitions */
@@ -789,6 +793,39 @@ namespace ThemeManager {
             }
         }
 
+        void
+        UninstallThread(ConstThemePtr theme) {
+            try {
+                if (auto hexId = GetHexId(theme))
+                    safe_theme_id_map.lock()
+                        ->erase(*hexId);
+
+                safe_themes_map.lock()
+                    ->erase(theme->path.filename());
+
+                // If there's a cached thumbnail, delete it.
+                if (theme->metadata.themeID) {
+                    auto thumbnail = CalcLegacyThumbnailPath(*theme->metadata.themeID);
+                    if (exists(thumbnail))
+                        DeletePath(thumbnail);
+                }
+
+                // If there's legacy metadata, delete it.
+                auto& leg_meta = theme->legacyMetadataPath;
+                if (!leg_meta.empty()) {
+                    if (exists(leg_meta))
+                        DeletePath(leg_meta);
+                }
+
+                // Finally, delete the theme path with all its contents.
+                DeletePath(theme->path);
+            }
+            catch (std::exception& e) {
+                std::string msg = "Uninstall error: "s + e.what();
+                AddTask(TaskPrintError, std::move(msg));
+            }
+        }
+
     } // namespace
 
     /*------------------*/
@@ -805,14 +842,17 @@ namespace ThemeManager {
         RefreshUThemes();
 
         install_thread = {};
+        uninstall_thread = {};
     }
 
     void finalize() {
         TRACE_FUNC;
 
-        install_thread = {};
         refresh_themes_thread = {};
         refresh_uthemes_thread = {};
+
+        install_thread = {};
+        uninstall_thread = {};
     }
 
     void process() {
@@ -862,34 +902,10 @@ namespace ThemeManager {
 
     // NOTE: This takes a copy and not a reference, to keep the theme object alive while
     // it's being erased.
-    // TODO: should run on a background thread aswell.
     void
     Uninstall(ConstThemePtr theme) {
         PluginManager::Disable(theme->path);
-
-        if (auto hexId = GetHexId(theme))
-            safe_theme_id_map.lock()
-                ->erase(*hexId);
-
-        safe_themes_map.lock()
-            ->erase(theme->path.filename());
-
-        // If there's a cached thumbnail, delete it.
-        if (theme->metadata.themeID) {
-            auto thumbnail = CalcLegacyThumbnailPath(*theme->metadata.themeID);
-            if (exists(thumbnail))
-                DeletePath(thumbnail);
-        }
-
-        // If there's legacy metadata, delete it.
-        auto& leg_meta = theme->legacyMetadataPath;
-        if (!leg_meta.empty()) {
-            if (exists(leg_meta))
-                DeletePath(leg_meta);
-        }
-
-        // Finally, delete the theme path with all its contents.
-        DeletePath(theme->path);
+        uninstall_thread = std::jthread{UninstallThread, std::move(theme)};
     }
 
     std::filesystem::path
@@ -942,12 +958,15 @@ namespace ThemeManager {
     RefreshInstalledThemes() {
         refresh_themes_thread = {}; // ensure any current thread is stopped
         refresh_themes_thread_busy = true;
-        safe_theme_id_map.lock()->clear();
-        safe_themes_map.lock()->clear();
         refresh_themes_thread = std::jthread{
             [](std::stop_token stopper)
             {
                 try {
+                    safe_theme_id_map.lock()->clear();
+                    safe_themes_map.lock()->clear();
+                    if (stopper.stop_requested())
+                        throw std::runtime_error{"thread stopped"};
+
                     for (auto& entry : std::filesystem::directory_iterator{THEMES_ROOT}) {
                         if (stopper.stop_requested())
                             throw std::runtime_error{"thread stopped"};
@@ -1011,11 +1030,14 @@ namespace ThemeManager {
     RefreshUThemes() {
         refresh_uthemes_thread = {}; // ensure any current thread is stopped
         refresh_uthemes_thread_busy = true;
-        safe_uthemes_map.lock()->clear();
         refresh_uthemes_thread = std::jthread{
             [](std::stop_token stopper)
             {
                 try {
+                    safe_uthemes_map.lock()->clear();
+                    if (stopper.stop_requested())
+                        throw std::runtime_error{"thread stopped"};
+
                     for (auto& entry : std::filesystem::directory_iterator{THEMES_ROOT}) {
                         if (stopper.stop_requested())
                             throw std::runtime_error{"thread stopped"};

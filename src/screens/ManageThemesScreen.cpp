@@ -25,6 +25,7 @@
 #include "../PluginManager.h"
 #include "../ThemeManager.h"
 #include "../tracer.hpp"
+#include "../UI.h"
 #include "../utils.h"
 #include "DeleteThemePopup.h"
 #include "DownloadThemePopup.h"
@@ -404,6 +405,8 @@ namespace ManageThemesScreen {
             if (!theme_frame)
                 return;
 
+            // TODO: use a vertical button box
+
             const auto &style = ImGui::GetStyle();
 
             const std::string install_label = ICON_FA_COGS " Install";
@@ -412,7 +415,7 @@ namespace ManageThemesScreen {
             auto delete_size = ImGui::CalcTextSize(delete_label);
 
             // Use a common button size, make it prettier when it lines up.
-            const ImVec2 button_size = max(install_size, delete_size) + 2 * style.FramePadding;
+            const auto button_size = UI::max(install_size, delete_size) + 2 * style.FramePadding;
 
             const float filename_width =
                 ImGui::GetContentRegionAvail().x

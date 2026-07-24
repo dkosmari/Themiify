@@ -69,14 +69,8 @@ namespace SettingsScreen {
         /* Function declarations */
         /*-----------------------*/
 
-        bool
-        check_is_first_boot();
-
         void
         load_settings();
-
-        void
-        run_boot_integrity_check();
 
         void
         save_settings();

@@ -10,6 +10,7 @@
 #pragma once
 
 namespace SettingsPopup {
+
     enum class OpenState {
         stylemiiu,
         integrity,
@@ -18,7 +19,10 @@ namespace SettingsPopup {
         cache,
     };
 
-    void open(OpenState openState);
+    void
+    open(OpenState openState);
 
-    void process_ui();
-}
+    void
+    process_ui();
+
+} // namespace SettingsPopup

@@ -34,41 +34,47 @@ namespace QRCodePopup {
 
     namespace {
 
+        /*-------*/
+        /* Types */
+        /*-------*/
+
         enum class State {
             hidden,
             queued,
             visible,
         };
 
-        State state;
+        /*-----------*/
+        /* Constants */
+        /*-----------*/
+
         const std::string popup_id = "QRCodePopup"s;
+        const unsigned scan_frame_every = 4;
+
+        /*-----------*/
+        /* Variables */
+        /*-----------*/
+
+        State state;
 
         quirc* qr = nullptr;
         unsigned scan_frame_counter;
-        const unsigned scan_frame_every = 4;
 
         Mix_Chunk *scan_sound;
 
+        /*-----------------------*/
+        /* Function declarations */
+        /*-----------------------*/
+
         void
-        start_scan() {
-            TRACE_FUNC;
+        scan_code();
 
-            if (qr)
-                return;
+        void
+        start_scan();
 
-            qr = quirc_new();
-
-            if (!qr) {
-                cerr << "quirc_new failed" << endl;
-                return;
-            }
-
-            if (quirc_resize(qr, Camera::get_width(), Camera::get_height()) < 0) {
-                cerr << "quirc_resize failed" << endl;
-                quirc_destroy(qr);
-                qr = nullptr;
-            }
-        }
+        /*----------------------*/
+        /* Function definitions */
+        /*----------------------*/
 
         void
         scan_code() {
@@ -128,7 +134,32 @@ namespace QRCodePopup {
             }
         }
 
+        void
+        start_scan() {
+            TRACE_FUNC;
+
+            if (qr)
+                return;
+
+            qr = quirc_new();
+
+            if (!qr) {
+                cerr << "quirc_new failed" << endl;
+                return;
+            }
+
+            if (quirc_resize(qr, Camera::get_width(), Camera::get_height()) < 0) {
+                cerr << "quirc_resize failed" << endl;
+                quirc_destroy(qr);
+                qr = nullptr;
+            }
+        }
+
     } // namespace
+
+    /*------------------*/
+    /* Public functions */
+    /*------------------*/
 
     void
     initialize() {
@@ -233,4 +264,5 @@ namespace QRCodePopup {
                 ;
         }
     }
+
 } // namespace QRCodePopup

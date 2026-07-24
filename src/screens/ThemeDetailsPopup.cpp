@@ -103,7 +103,7 @@ namespace ThemeDetailsPopup {
 
         if (Child left{"left", {left_width, 0}, ImGuiChildFlags_NavFlattened}) {
             {
-                Font title_font{nullptr, 50};
+                Font name_font{nullptr, 50};
                 ImGui::TextWrapped(installedTheme->metadata.themeName);
             }
             if (installedTheme->metadata.themeAuthor)
@@ -215,7 +215,7 @@ namespace ThemeDetailsPopup {
         if (Child left{"left", {left_width, 0},
                        ImGuiChildFlags_NavFlattened}) {
             {
-                Font title_font{nullptr, 50};
+                Font name_font{nullptr, 50};
                 ImGui::TextWrapped(fullTheme.name);
             }
             ImGui::TextWrapped("by %s", fullTheme.creator.username.data());

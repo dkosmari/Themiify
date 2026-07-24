@@ -34,6 +34,7 @@ add_executable(themiify
     src/ThemezerAPI.cpp
     src/timer.cpp
     src/tracer.cpp
+    src/UI.cpp
     src/utils.cpp
     src/Zip.cpp
 )

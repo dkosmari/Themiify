@@ -17,45 +17,67 @@
 #include "DeleteThemePopup.h"
 #include "ManageThemesScreen.h"
 #include "../IconsFontAwesome4.h"
-#include "../utils.h"
+#include "../UI.h"
 
 using namespace std::literals;
 
 namespace DeleteThemePopup {
-    enum class State {
-        hidden,
-        shown,
-    };
 
-    State state;
+    namespace {
 
-    bool popup_queued;
-    const std::string popup_id = "DeleteThemePopup"s;
+        /*-------*/
+        /* Types */
+        /*-------*/
 
-    ThemeManager::ConstThemePtr installedTheme;
+        enum class State {
+            hidden,
+            queued,
+            visible,
+        };
 
-    void open(ThemeManager::ConstThemePtr installed_theme) {
-        popup_queued = true;
-        state = State::shown;
+        /*-----------*/
+        /* Constants */
+        /*-----------*/
+
+        const std::string popup_id = "DeleteThemePopup"s;
+
+        /*-----------*/
+        /* Variables */
+        /*-----------*/
+
+        State state;
+
+        ThemeManager::ConstThemePtr installedTheme;
+
+    } // namespace
+
+    /*------------------*/
+    /* Public functions */
+    /*------------------*/
+
+    void
+    open(ThemeManager::ConstThemePtr installed_theme) {
+        state = State::queued;
         installedTheme = std::move(installed_theme);
     }
 
-    void process_ui() {
+    void
+    process_ui() {
         using namespace ImGui::RAII;
         if (state == State::hidden)
             return;
 
-        if (popup_queued) {
+        if (state == State::queued) {
             ImGui::OpenPopup(popup_id);
-            popup_queued = false;
+            state = State::visible;
         }
 
         auto center = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(center, ImGuiCond_Always, {0.5f, 0.5f});
-
+        ImGui::SetNextWindowSize({600, 0}, ImGuiCond_Always);
         PopupModal popup{popup_id, nullptr,
                          ImGuiWindowFlags_NoSavedSettings |
-                         ImGuiWindowFlags_AlwaysAutoResize |
+                         // ImGuiWindowFlags_AlwaysAutoResize |
                          ImGuiWindowFlags_NoMove |
                          ImGuiWindowFlags_NoTitleBar |
                          ImGuiWindowFlags_NoResize};
@@ -65,47 +87,29 @@ namespace DeleteThemePopup {
             return;
         }
 
-        const auto &style = ImGui::GetStyle();
-
-        {
-            Font title_font{nullptr, 35};
-            ImGui::Text("Delete Confirmation");
-        }
+        UI::Title("Delete Confirmation");
 
         ImGui::TextWrapped("Would you like to delete \"%s\"?",
                            installedTheme->metadata.themeName.c_str());
 
-        // Show two buttons with same size.
-        const ImVec2 available = ImGui::GetContentRegionAvail();
-
-        const std::string delete_label = ICON_FA_TRASH " Delete";
-        const std::string cancel_label = ICON_FA_TIMES " Cancel";
-
-        const ImVec2 delete_size = ImGui::CalcTextSize(delete_label);
-        const ImVec2 cancel_size = ImGui::CalcTextSize(cancel_label);
-
-        const ImVec2 button_size = max(delete_size, cancel_size) + 2 * style.FramePadding;
-
-        float spacing = style.ItemSpacing.x;
-        float total_width = 2 * button_size.x + spacing;
-
-        float start_x = (available.x - total_width) / 2;
-
-        if (start_x > 0)
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-        if (ImGui::Button(delete_label, button_size)) {
-            ThemeManager::Uninstall(installedTheme);
-            ImGui::CloseCurrentPopup();
-            state = State::hidden;
-        }
-        ImGui::SetItemDefaultFocus();
-
-        ImGui::SameLine();
-
-        if (ImGui::Button(cancel_label, button_size)) {
-            ImGui::CloseCurrentPopup();
-            state = State::hidden;
-        }
+        UI::ButtonHBox buttons;
+        buttons.add(ICON_FA_TIMES " Cancel",
+                    []
+                    {
+                        ImGui::CloseCurrentPopup();
+                        state = State::hidden;
+                        installedTheme.reset();
+                    });
+        buttons.add(ICON_FA_TRASH " Delete",
+                    true,
+                    []
+                    {
+                        ThemeManager::Uninstall(installedTheme);
+                        ImGui::CloseCurrentPopup();
+                        state = State::hidden;
+                        installedTheme.reset();
+                    });
+        buttons.show();
     }
-}
+
+} // namespace DeleteThemePopup

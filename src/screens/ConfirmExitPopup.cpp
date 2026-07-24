@@ -17,7 +17,7 @@
 
 #include "../App.h"
 #include "../IconsFontAwesome4.h"
-#include "../utils.h"
+#include "../UI.h"
 
 namespace ConfirmExitPopup {
 
@@ -55,53 +55,35 @@ namespace ConfirmExitPopup {
         const auto center = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(center, ImGuiCond_Always, {0.5f, 0.5f});
         PopupModal popup{popup_id, nullptr,
-                         ImGuiWindowFlags_NoSavedSettings |
                          ImGuiWindowFlags_AlwaysAutoResize |
                          ImGuiWindowFlags_NoDecoration |
-                         ImGuiWindowFlags_NoMove};
+                         ImGuiWindowFlags_NoMove |
+                         ImGuiWindowFlags_NoSavedSettings};
         if (!popup) {
             state = State::hidden;
             return;
         }
 
-        {
-            Font title_font{nullptr, 40};
-            ImGui::Text("Are you sure you want to exit?");
-        }
+        UI::Title("Exit confirmation");
 
-        ImGui::Separator();
+        ImGui::Text("Are you sure you want to exit?");
 
-        // Show exit/cancel buttons, centered.
-
-        const std::string exit_label = ICON_FA_SIGN_OUT " Exit";
-        const auto exit_size = ImGui::CalcTextSize(exit_label);
-
-        const std::string cancel_label = ICON_FA_TIMES " Cancel";
-        const auto cancel_size = ImGui::CalcTextSize(cancel_label);
-
-        // Use same size for both buttons.
-        const auto& style = ImGui::GetStyle();
-        const auto button_size = max(exit_size, cancel_size) + 2 * style.FramePadding;
-
-        const float buttons_width = 2 * button_size.x + style.ItemSpacing.x;
-
-        float offset = (ImGui::GetContentRegionAvail().x - buttons_width) / 2;
-        if (offset > 0)
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset);
-
-        if (ImGui::Button(exit_label, button_size)) {
-            ImGui::CloseCurrentPopup();
-            state = State::hidden;
-            App::quit();
-        }
-
-        ImGui::SameLine();
-
-        if (ImGui::Button(cancel_label, button_size)) {
-            ImGui::CloseCurrentPopup();
-            state = State::hidden;
-        }
-
+        UI::ButtonHBox buttons;
+        buttons.add(ICON_FA_TIMES " Cancel",
+                    []
+                    {
+                        ImGui::CloseCurrentPopup();
+                        state = State::hidden;
+                    });
+        buttons.add(ICON_FA_SIGN_OUT " Exit",
+                    true,
+                    []
+                    {
+                        ImGui::CloseCurrentPopup();
+                        state = State::hidden;
+                        App::quit();
+                    });
+        buttons.show();
     }
 
 } // namespace ConfirmExitPopup

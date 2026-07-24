@@ -22,7 +22,7 @@
 #include "../IconsFontAwesome4.h"
 #include "../PluginManager.h"
 #include "../ThemeManager.h"
-#include "../utils.h"
+#include "../UI.h"
 #include "InstallThemePopup.h"
 
 using std::cout;
@@ -33,6 +33,10 @@ namespace DownloadThemePopup {
 
     namespace {
 
+        /*-------*/
+        /* Types */
+        /*-------*/
+
         enum class State {
             hidden,
             queued,
@@ -42,9 +46,17 @@ namespace DownloadThemePopup {
             success,
         };
 
-        State state;
+        /*-----------*/
+        /* Constants */
+        /*-----------*/
 
         const std::string popup_id = "Download Theme";
+
+        /*-----------*/
+        /* Variables */
+        /*-----------*/
+
+        State state;
         std::string utheme_url;
         std::filesystem::path utheme_filename;
 
@@ -53,7 +65,150 @@ namespace DownloadThemePopup {
 
         bool enable_theme = true;
 
+        /*-----------------------*/
+        /* Function declarations */
+        /*-----------------------*/
+
+        void
+        on_download_error(const std::exception& e);
+
+        void
+        on_download_success(const DownloadManager::Info& info);
+
+        void
+        show_confirmation();
+
+        void
+        show_downloading();
+
+        void
+        show_error();
+
+        void
+        show_success();
+
+        /*----------------------*/
+        /* Function definitions */
+        /*----------------------*/
+
+        void
+        on_download_error(const std::exception& e) {
+            state = State::error;
+            error_message = e.what();
+        }
+
+        void
+        on_download_success(const DownloadManager::Info& info) {
+            cout << "Finished " << info.filename << endl;
+            state = State::success;
+            ThemeManager::RefreshUThemes();
+        }
+
+        void
+        show_confirmation() {
+            UI::Title("Download Confirmation");
+
+            ImGui::TextWrapped("Would you like to download the theme:\n%s ?",
+                               transfer_name.c_str());
+
+            UI::ButtonHBox buttons;
+            buttons.valign = 1.0f;
+            buttons.add(ICON_FA_TIMES " Cancel",
+                        []
+                        {
+                            ImGui::CloseCurrentPopup();
+                            state = State::hidden;
+                        });
+            buttons.add(ICON_FA_DOWNLOAD " Download",
+                        true,
+                        []
+                        {
+                            state = State::downloading;
+                            if (!DownloadManager::add(utheme_url,
+                                                      utheme_filename,
+                                                      on_download_success,
+                                                      on_download_error)) {
+                                state = State::error;
+                                error_message = "Failed to queue download transfer";
+                            }
+                        });
+            buttons.show();
+        }
+
+        void
+        show_downloading() {
+            UI::Title("Downloading Theme...");
+
+            ImGui::TextWrapped(transfer_name);
+
+            ImGui::TextWrapped(utheme_url);
+
+            ImGui::TextWrapped("Saving to: %s", utheme_filename.filename().c_str());
+
+            auto info = DownloadManager::get_info(utheme_url);
+
+            //auto speed = humanize::value_bin(info->speed) + "B/s";
+            //ImGui::Text("DL speed: %s", speed.data());
+
+            // Place the progress bar on the bottom.
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY()
+                                 + ImGui::GetContentRegionAvail().y
+                                 - ImGui::GetFrameHeight());
+
+            ImGui::ProgressBar(info->progress);
+
+            // TODO: downloads should be cancelable, should have a cancel button here.
+        }
+
+        void
+        show_error() {
+            UI::Title("ERROR!");
+
+            ImGui::TextWrapped(error_message);
+
+            if (ImGui::Button("Close")) {
+                DownloadManager::clear_all();
+                state = State::hidden;
+            }
+        }
+
+        void
+        show_success() {
+            UI::Title("Download successful!");
+
+            ImGui::TextWrapped("Would you like to install this theme for the StyleMiiU plugin?");
+
+            const std::string enable_label =
+                (PluginManager::IsShuffling() ? "Enable"s : "Apply"s)
+                + " theme after installation"s;
+            ImGui::Checkbox(enable_label, enable_theme);
+
+            UI::ButtonHBox buttons;
+            buttons.valign = 1.0f;
+            buttons.add(ICON_FA_TIMES " Cancel",
+                        []
+                        {
+                            ImGui::CloseCurrentPopup();
+                            state = State::hidden;
+                        });
+            buttons.add(ICON_FA_COGS " Install",
+                        true,
+                        []
+                        {
+                            ImGui::CloseCurrentPopup();
+                            state = State::hidden;
+                            // TODO: report error if a .utheme is missing metadata.
+                            if (auto meta = ThemeManager::ReadUThemeMetadata(utheme_filename))
+                                InstallThemePopup::open(utheme_filename, meta, true, enable_theme);
+                        });
+            buttons.show();
+        }
+
     } // namespace
+
+    /*------------------*/
+    /* Public functions */
+    /*------------------*/
 
     void
     open(const ThemezerAPI::WiiuThemeSmall &theme_data) {
@@ -73,157 +228,8 @@ namespace DownloadThemePopup {
         error_message.clear();
     }
 
-    void show_confirmation() {
-        using namespace ImGui::RAII;
-
-        const auto &style = ImGui::GetStyle();
-        {
-            Font title_font{nullptr, 35};
-            ImGui::Text("Download Confirmation");
-        }
-
-        ImGui::TextWrapped("Would you like to download the theme:\n%s ?",
-                           transfer_name.c_str());
-
-        // Create two buttons with equal widths.
-        const ImVec2 available = ImGui::GetContentRegionAvail();
-
-        const std::string download_label = ICON_FA_DOWNLOAD " Download";
-        const std::string cancel_label = ICON_FA_TIMES " Cancel";
-
-        const ImVec2 download_size = ImGui::CalcTextSize(download_label);
-        const ImVec2 cancel_size = ImGui::CalcTextSize(cancel_label);
-
-        const ImVec2 button_size = max(download_size, cancel_size) + 2 * style.FramePadding;
-
-        // Place the buttons on the bottom.
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + available.y - button_size.y);
-
-        const float total_width = 2 * button_size.x + style.ItemSpacing.x;
-
-        const float start_x = (available.x - total_width) / 2;
-
-        if (start_x > 0)
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-        if (ImGui::Button(download_label, button_size)) {
-            state = State::downloading;
-            if (!DownloadManager::add(utheme_url,
-                                      utheme_filename,
-                                      [](const DownloadManager::Info& info)
-                                          {
-                                              cout << "Finished " << info.filename << endl;
-                                              state = State::success;
-                                              ThemeManager::RefreshUThemes();
-                                          },
-                                          [](const std::exception& e)
-                                          {
-                                              state = State::error;
-                                              error_message = e.what();
-                                          })) {
-                    state = State::error;
-                    error_message = "Failed to queue download transfer";
-                }
-        }
-        ImGui::SetItemDefaultFocus();
-
-        ImGui::SameLine();
-
-        if (ImGui::Button(cancel_label, button_size)) {
-            ImGui::CloseCurrentPopup();
-            state = State::hidden;
-        }
-    }
-
-    void show_downloading() {
-        using namespace ImGui::RAII;
-        {
-            Font title_font{nullptr, 35};
-            ImGui::Text("Downloading Theme...");
-        }
-
-        ImGui::TextWrapped(transfer_name);
-
-        ImGui::TextWrapped(utheme_url);
-
-        ImGui::TextWrapped("Saving to: %s", utheme_filename.filename().c_str());
-
-        auto info = DownloadManager::get_info(utheme_url);
-
-        //auto speed = humanize::value_bin(info->speed) + "B/s";
-        //ImGui::Text("DL speed: %s", speed.data());
-
-        // Place the progress bar on the bottom.
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY()
-                             + ImGui::GetContentRegionAvail().y
-                             - ImGui::GetFrameHeight());
-
-        ImGui::ProgressBar(info->progress);
-
-        // TODO: downloads should be cancelable, should have a cancel button here.
-    }
-
-    void show_success() {
-        using namespace ImGui::RAII;
-
-        {
-            Font title_font{nullptr, 50};
-            ImGui::Text("Download successful!");
-        }
-
-        ImGui::TextWrapped("Would you like to install this theme for the StyleMiiU plugin?");
-
-        std::string enable_label = (PluginManager::IsShuffling() ? "Enable"s : "Apply"s)
-            + " theme after installation"s;
-        ImGui::Checkbox(enable_label, enable_theme);
-
-        // Make two buttons of equal size.
-        const std::string install_label = ICON_FA_COGS " Install";
-        const std::string cancel_label = ICON_FA_TIMES " Cancel";
-        const ImVec2 install_size = ImGui::CalcTextSize(install_label);
-        const ImVec2 cancel_size = ImGui::CalcTextSize(cancel_label);
-
-        const auto &style = ImGui::GetStyle();
-        const ImVec2 button_size = max(install_size, cancel_size) + 2 * style.FramePadding;
-
-        const ImVec2 available = ImGui::GetContentRegionAvail();
-        // Place the buttons on the bottom.
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + available.y - button_size.y);
-
-        const float total_width = 2 * button_size.x + style.ItemSpacing.x;
-
-        const float start_x = (available.x - total_width) / 2;
-        if (start_x > 0.0f)
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + start_x);
-
-        if (ImGui::Button(install_label, button_size)) {
-            ImGui::CloseCurrentPopup();
-            state = State::hidden;
-            // TODO: report error if a .utheme is missing metadata.
-            if (auto meta = ThemeManager::ReadUThemeMetadata(utheme_filename))
-                InstallThemePopup::open(utheme_filename, meta, true, enable_theme);
-        }
-        ImGui::SetItemDefaultFocus();
-
-        ImGui::SameLine();
-
-        if (ImGui::Button(cancel_label, button_size)) {
-            ImGui::CloseCurrentPopup();
-            state = State::hidden;
-        }
-    }
-
-    void show_error() {
-        ImGui::Text("ERROR!");
-        ImGui::TextWrapped(error_message);
-
-        if (ImGui::Button("Close")) {
-            DownloadManager::clear_all();
-            state = State::hidden;
-        }
-    }
-
-    void process_ui() {
+    void
+    process_ui() {
         using namespace ImGui::RAII;
         if (state == State::hidden)
             return;
@@ -240,11 +246,9 @@ namespace DownloadThemePopup {
         auto center = viewport->GetCenter();
         ImGui::SetNextWindowPos(center, ImGuiCond_Always, {0.5f, 0.5f});
         PopupModal popup{popup_id, nullptr,
-                         ImGuiWindowFlags_NoSavedSettings |
+                         ImGuiWindowFlags_NoDecoration |
                          ImGuiWindowFlags_NoMove |
-                         ImGuiWindowFlags_NoCollapse |
-                         ImGuiWindowFlags_NoTitleBar |
-                         ImGuiWindowFlags_NoResize};
+                         ImGuiWindowFlags_NoSavedSettings};
 
         if (!popup) {
             state = State::hidden;
