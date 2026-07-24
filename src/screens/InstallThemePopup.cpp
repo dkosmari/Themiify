@@ -71,6 +71,9 @@ namespace InstallThemePopup {
         /*-----------------------*/
 
         void
+        action_close();
+
+        void
         error_handler(const std::string& msg);
 
         void
@@ -99,8 +102,13 @@ namespace InstallThemePopup {
         /*----------------------*/
 
         void
-        error_handler(const std::string& msg)
-        {
+        action_close() {
+            ImGui::CloseCurrentPopup();
+            state = State::hidden;
+        }
+
+        void
+        error_handler(const std::string& msg) {
             cerr << "ERROR: " << msg << endl;
             error_message = msg;
             state = State::error;
@@ -118,15 +126,15 @@ namespace InstallThemePopup {
         show_messages() {
             using namespace ImGui::RAII;
 
-            // NOTE: take up all available space except for a row of buttons at the bottom.
-            ImVec2 size{0.0f, -ImGui::GetFrameHeightWithSpacing()};
+            Font msg_font{nullptr, 24};
+
+            ImVec2 size{0.0f, 8 * ImGui::GetTextLineHeightWithSpacing()};
             if (Child messages_box{"messages_box",
                                    size,
                                    ImGuiChildFlags_None,
                                    ImGuiWindowFlags_NoSavedSettings}) {
 
                 {
-                    Font msg_font{nullptr, 24};
 
                     // Show progress messages.
                     if (!progress_messages.empty()) {
@@ -162,14 +170,7 @@ namespace InstallThemePopup {
             ImGui::Checkbox(enable_label, enable_theme);
 
             UI::ButtonHBox buttons;
-            buttons.add(
-                ICON_FA_TIMES " Cancel",
-                []
-                {
-                    ImGui::CloseCurrentPopup();
-                    state = State::hidden;
-                }
-            );
+            buttons.add(ICON_FA_TIMES " Cancel", action_close);
             buttons.add(
                 ICON_FA_COGS " Install",
                 true,
@@ -188,42 +189,22 @@ namespace InstallThemePopup {
             show_messages();
 
             UI::ButtonHBox buttons;
-            buttons.add(
-                ICON_FA_TIMES " Close",
-                true,
-                []
-                {
-                    ImGui::CloseCurrentPopup();
-                    state = State::hidden;
-                }
-            );
+            buttons.add(ICON_FA_TIMES " Close", true, action_close);
             buttons.show();
         }
 
         void
         show_state_installing() {
-            // TODO: set a window size instead.
-            // Dummy to have nicer window width here
-            ImGui::SetCursorPosX(800.0f);
-            ImGui::Dummy({0.0f, 0.0f});
-
             UI::Title("Installing");
 
             ImGui::TextWrapped("Installing %s...", metadata->themeName.c_str());
 
-            ImGui::TextWrapped("This may take time, do not turn off your Wii U.");
+            ImGui::Text("This may take time, do not turn off your Wii U.");
 
             show_messages();
 
             UI::ButtonHBox buttons;
-            buttons.add(
-                ICON_FA_TIMES " Cancel",
-                true,
-                []
-                {
-                    ThemeManager::CancelInstall();
-                }
-            );
+            buttons.add(ICON_FA_TIMES " Cancel", true, ThemeManager::CancelInstall);
             buttons.show();
         }
 
@@ -247,22 +228,14 @@ namespace InstallThemePopup {
             ImGui::TextWrapped("Would you like to delete it?");
 
             UI::ButtonHBox buttons;
-            buttons.add(
-                ICON_FA_DOWNLOAD " Keep",
-                []
-                {
-                    ImGui::CloseCurrentPopup();
-                    state = State::hidden;
-                }
-            );
+            buttons.add(ICON_FA_DOWNLOAD " Keep", action_close);
             buttons.add(
                 ICON_FA_TRASH " Delete",
                 true,
                 []
                 {
                     DeletePath(utheme);
-                    ImGui::CloseCurrentPopup();
-                    state = State::hidden;
+                    action_close();
                     ThemeManager::RefreshUThemes();
                 }
             );
@@ -315,17 +288,14 @@ namespace InstallThemePopup {
 
         auto center = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(center, ImGuiCond_Always, {0.5f, 0.5f});
-
+        ImGui::SetNextWindowSize({900, 0}, ImGuiCond_Always);
         PopupModal popup{
             popup_id,
             nullptr,
-            ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoDecoration |
             ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoScrollbar |
-            ImGuiWindowFlags_NoScrollWithMouse |
-            ImGuiWindowFlags_NoCollapse |
-            ImGuiWindowFlags_NoTitleBar
+            ImGuiWindowFlags_NoSavedSettings
         };
 
         if (!popup) {
